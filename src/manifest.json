@@ -1,0 +1,16 @@
+{
+  "name": "Livro-Caixa",
+  "short_name": "Livro-Caixa",
+  "description": "Controle pessoal de despesas, entradas, cartão de crédito e dívidas",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0E1210",
+  "theme_color": "#171D1A",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

@@ -1,0 +1,21 @@
+# Local secrets and exported financial data
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+*.cert.json
+*.cert.secure.json
+*.secure.json
+portfolio-*.json
+livro-caixa-*.json
+extrato-cripto-*.csv*
+credentials*.json
+secrets*.json
+*.db
+*.sqlite
+*.sqlite3
+*.bak
