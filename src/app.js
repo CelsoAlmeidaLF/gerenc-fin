@@ -325,8 +325,8 @@
   FinancSettings.addSection({ title: 'Dados e backup', rows: [
     { icon: 'download', label: 'Exportar backup (JSON)', description: 'Arquivo criptografado com PIN próprio.', onClick: clickById('btnExport') },
     { icon: 'upload', label: 'Importar backup (JSON)', description: 'Restaura um backup exportado.', onClick: clickById('btnImport') },
-    { icon: 'shield', label: 'Exportar certificado FINANC', description: 'Cópia protegida; o mesmo certificado em todos os apps.', onClick: clickById('btnExportCert') },
-    { icon: 'shield-check', label: 'Importar certificado', description: 'Usa o certificado FINANC de outro aparelho.', onClick: clickById('btnImportCert') },
+    { icon: 'shield', label: 'Exportar certificado', description: 'Cópia protegida; o mesmo certificado em todos os apps.', onClick: clickById('btnExportCert') },
+    { icon: 'shield-check', label: 'Importar certificado', description: 'Usa o certificado de outro aparelho.', onClick: clickById('btnImportCert') },
     { icon: 'trash', label: 'Limpar lançamentos', description: 'Apaga despesas, entradas, cartão e dívidas.', danger: true, onClick: clickById('btnReset') },
   ] });
 
@@ -503,7 +503,7 @@
       try {
         var cert=await window.importCertificate(JSON.parse(ev.target.result), 'gerenc-fin:certificate');
         if (!cert || !cert.id || !cert.secret) throw new Error('certificado inválido');
-        if (!confirm(FinancCert.linked ? 'Importar este certificado? Ele passa a ser o certificado FINANC de todos os apps; o atual continua guardado para os backups antigos.' : 'Importar este certificado substituirá o certificado deste navegador. Continuar?')) return;
+        if (!confirm(FinancCert.linked ? 'Importar este certificado? Ele passa a ser o certificado de todos os apps; o atual continua guardado para os backups antigos.' : 'Importar este certificado substituirá o certificado deste navegador. Continuar?')) return;
         await saveCert(cert);
         alert('Certificado importado. Recarregue o aplicativo antes de abrir o backup.');
       } catch(err) { alert('Arquivo de certificado inválido.'); }
