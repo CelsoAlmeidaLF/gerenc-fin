@@ -40,6 +40,14 @@
     if (!pinOK(pin)) throw new Error('Use um PIN de 6 números.');
     return protectWithSecret(value, pin, context);
   }
+  // Arquivos exportados (backup, certificado): senha longa, porque o arquivo pode ir parar em qualquer lugar
+  // e um PIN de 6 números cai rápido em força bruta offline.
+  const PASSPHRASE_MIN = 10;
+  const passphraseOK = s => typeof s === 'string' && s.length >= PASSPHRASE_MIN;
+  async function protectPassphrase(value, passphrase, context) {
+    if (!passphraseOK(passphrase)) throw new Error('Use uma senha com pelo menos ' + PASSPHRASE_MIN + ' caracteres.');
+    return protectWithSecret(value, passphrase, context);
+  }
   async function unprotect(payload, pin, context) {
     if (!payload || payload.format !== 'financ-encrypted-v1' || payload.context !== context || payload.iterations !== ITERATIONS) throw new Error('Formato incompatível.');
     const salt = unb64(payload.salt);
@@ -48,7 +56,7 @@
   }
   // Preferências cifradas e autenticadas com a chave de dados (só existem com o cofre aberto); só valores da lista são aceitos.
   const AUTO_LOCK_MINUTES = [1, 5, 15, 30];
-  const DEFAULT_SETTINGS = Object.freeze({ autoLockMinutes: 15, lockOnHide: false });
+  const DEFAULT_SETTINGS = Object.freeze({ autoLockMinutes: 5, lockOnHide: false });
   function cleanSettings(raw) {
     const s = raw && typeof raw === 'object' ? raw : {};
     return {
@@ -307,7 +315,7 @@
         const key = await importAes(rawKey);
         const values = envelope.payload ? await open(envelope.payload, key, this.context('data')) : {};
         if (!values || typeof values !== 'object' || Array.isArray(values) || Object.values(values).some(v => typeof v !== 'string')) throw new Error('Dados inválidos.');
-        // Preferência adulterada ou ilegível volta ao padrão (15 min, sem bloqueio ao sair).
+        // Preferência adulterada ou ilegível volta ao padrão (5 min, sem bloqueio ao sair).
         let prefs = { ...DEFAULT_SETTINGS };
         if (envelope.settings) { try { prefs = cleanSettings(await open(envelope.settings, key, this.context('settings'))); } catch (_) {} }
         this.prefs = prefs;
@@ -445,7 +453,7 @@
       try { PublicKeyCredential.signalUnknownCredential({ rpId: location.hostname, credentialId: b64url(credentialId) }).catch(() => {}); } catch (_) {}
     },
   };
-  const api = { Vault, Identity, protect, unprotect, pinOK, recoveryCode, webauthn, AUTO_LOCK_MINUTES, certOK };
+  const api = { Vault, Identity, protect, protectPassphrase, passphraseOK, PASSPHRASE_MIN, unprotect, pinOK, recoveryCode, webauthn, AUTO_LOCK_MINUTES, certOK };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.FinancVault = api;
 })(globalThis);

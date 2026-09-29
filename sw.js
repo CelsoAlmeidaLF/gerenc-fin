@@ -1,4 +1,4 @@
-const CACHE_NAME = 'livro-caixa-v1.6.2';
+const CACHE_NAME = 'livro-caixa-v1.7.0';
 const APP_SHELL = [
   './index.html',
   './app.js',
@@ -6,6 +6,15 @@ const APP_SHELL = [
   './secure-ui.js',
   './secure-ui.css',
   './financ-icons.js',
+  './fonts/fonts.css',
+  './fonts/ibm-plex-mono-latin-400.woff2',
+  './fonts/ibm-plex-mono-latin-500.woff2',
+  './fonts/ibm-plex-mono-latin-600.woff2',
+  './fonts/ibm-plex-mono-latin-ext-400.woff2',
+  './fonts/ibm-plex-mono-latin-ext-500.woff2',
+  './fonts/ibm-plex-mono-latin-ext-600.woff2',
+  './fonts/space-grotesk-latin-ext.woff2',
+  './fonts/space-grotesk-latin.woff2',
   './manifest.json',
   './icon-192.png',
   './icon-512.png',
