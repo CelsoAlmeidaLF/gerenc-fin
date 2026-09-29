@@ -1,4 +1,4 @@
-const CACHE_NAME = 'livro-caixa-v11';
+const CACHE_NAME = 'livro-caixa-v1.3.0';
 const APP_SHELL = [
   './index.html',
   './app.js',
