@@ -437,10 +437,17 @@
     button.setAttribute('aria-label', 'Abrir menu'); button.title = 'Menu';
     button.innerHTML = icon('more-vertical', 20);
     button.onclick = () => openProfile(button);
-    // Botão de 3 pontos ao lado do título do app; o painel abre pela esquerda.
-    // O app indica o lugar com data-vault-profile-slot; sem ele, entra no início da página.
-    const slot = document.querySelector('[data-vault-profile-slot]');
-    if (slot) slot.append(button); else document.body.prepend(button);
+    // Botão de 3 pontos ao lado do título do app (.app-head); o painel abre pela esquerda.
+    // O app indica o lugar com data-vault-profile-slot. Com várias telas, cada cabeçalho tem o seu
+    // e o botão vai para o da tela visível. Sem nenhum, entra no início da página.
+    const slots = document.querySelectorAll('[data-vault-profile-slot]');
+    if (!slots.length) { document.body.prepend(button); return; }
+    const place = () => {
+      const target = Array.from(slots).find(s => s.parentElement && s.parentElement.getClientRects().length) || slots[0];
+      if (button.parentElement !== target) target.append(button);
+    };
+    place();
+    if (slots.length > 1) new MutationObserver(place).observe(document.body, { subtree: true, attributes: true, attributeFilter: ['class', 'hidden', 'style'] });
   }
   function themeRow() {
     if (!themeSupported) return '';
