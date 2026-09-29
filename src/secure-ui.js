@@ -449,13 +449,6 @@
     place();
     if (slots.length > 1) new MutationObserver(place).observe(document.body, { subtree: true, attributes: true, attributeFilter: ['class', 'hidden', 'style'] });
   }
-  function themeRow() {
-    if (!themeSupported) return '';
-    let theme = 'system'; try { theme = nativeStorage.getItem(THEME_KEY) || 'system'; } catch (_) {}
-    return '<div class="vp-theme"><span class="vp-item-ic">' + icon('sun', 18) + '</span><div class="fs-seg" role="group" aria-label="Tema">'
-      + [['system', 'monitor', 'Sistema'], ['dark', 'moon', 'Escuro'], ['light', 'sun', 'Claro']].map(([v, ic, l]) => '<button type="button" data-vp="theme" data-v="' + v + '" aria-pressed="' + (theme === v) + '" title="' + l + '">' + icon(ic, 14) + '<span>' + l + '</span></button>').join('')
-      + '</div></div>';
-  }
   function openProfile(trigger) {
     if (!vault.key || document.getElementById('vaultProfile')) return;
     const cfg = vault.settings, bioOn = Boolean(vault.biometric);
@@ -477,7 +470,6 @@
       + '<nav class="vp-menu" aria-label="Menu do perfil">'
       + '<p class="vp-section">Conta</p>'
       + item('settings', 'settings', 'Configurações', 'PIN, biometria, bloqueio e tema')
-      + themeRow()
       + extra
       + '</nav>'
       + '<footer class="vp-foot">' + item('lock', 'lock', 'Bloquear agora', 'Salva e pede o PIN para voltar', 'vp-lock')
@@ -491,12 +483,6 @@
       const target = event.target.closest('[data-vp]'); if (!target) return;
       const action = target.dataset.vp;
       if (action === 'close') close();
-      else if (action === 'theme') {
-        const value = target.dataset.v;
-        try { if (value === 'system') nativeStorage.removeItem(THEME_KEY); else nativeStorage.setItem(THEME_KEY, value); } catch (_) {}
-        applyTheme(value);
-        drawer.querySelectorAll('[data-vp=theme]').forEach(b => b.setAttribute('aria-pressed', String(b === target)));
-      }
       else if (action === 'settings') { drawer.close(); FinancSettings.open(); }
       else if (action === 'lock') { drawer.close(); window.lockVault(); }
       else if (action[0] === 'x') {
