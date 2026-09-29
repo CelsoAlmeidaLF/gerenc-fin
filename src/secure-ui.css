@@ -135,3 +135,4 @@ html[data-vault-lock=top-right] #vaultTools { bottom:auto; top:calc(12px + env(s
 .fs-head h2 { border:0 !important; padding:0 !important; margin:0 !important; color:var(--ink, #eaf0ec) !important; font:700 18px/1.2 'Space Grotesk', system-ui, sans-serif !important; }
 .fs .fs-row, .fs .fs-seg button, .fs .fs-switch, .fs-back { margin:0; box-shadow:none; text-transform:none; letter-spacing:normal; }
 .fs .fs-title { border:0; padding:0; }
+.vault-version { display:block; margin-top:14px; color:var(--ink-dim, #8fa098); opacity:.55; font:10.5px/1 'IBM Plex Mono', monospace; letter-spacing:.06em; }

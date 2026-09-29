@@ -42,8 +42,10 @@
       : '<button type="button" tabindex="-1" data-key="' + k + '">' + k + '</button>').join('') + '</div>'
     + '<button id="vaultSubmit" class="vault-primary" type="submit">Desbloquear</button></form>'
     + '<div class="vault-footer"><button id="vaultBack" class="vault-link" type="button" hidden>' + icon('arrow-left', 16) + 'Voltar</button><button id="vaultRecover" class="vault-link" type="button">' + icon('key', 16) + 'Esqueci o PIN</button></div>'
-    + '<p id="vaultMessage" role="alert"></p>';
+    + '<p id="vaultMessage" role="alert"></p>'
+    + (root.dataset.vaultVersion ? '<small class="vault-version"></small>' : '');
   panel.querySelector('.vault-app-name').textContent = appName;
+  if (root.dataset.vaultVersion) panel.querySelector('.vault-version').textContent = 'v' + root.dataset.vaultVersion;
   if (logoLink) { const logo = panel.querySelector('.vault-logo'); logo.src = logoLink.getAttribute('href'); logo.hidden = false; }
   document.body.append(panel);
   const get = id => document.getElementById(id);
@@ -82,7 +84,7 @@
   function takeOver() { session.set(TAKEOVER); location.reload(); }
   // Outra aba assumiu: salva o que der (o cofre recusa gravar por cima de dados mais novos) e esquece a chave.
   function lostTab() {
-    tabOwned = false; locking = true; root.classList.add('vault-locked');
+    tabOwned = false; locking = true; root.classList.add('vault-locked'); dropSession();
     const save = vault.key ? vault.flush().catch(() => {}) : Promise.resolve();
     save.finally(() => vault.forget());
     const old = get('vaultGate'); if (old) old.remove();
@@ -112,6 +114,50 @@
   }
   const legacyCleanup = tabReady.then(clearLegacySessionKeys);
   legacyCleanup.catch(block);
+
+  // Recarregar a página não bloqueia: a chave do cofre fica cifrada no sessionStorage da aba (some ao fechar a aba)
+  // por uma chave AES não-exportável guardada no IndexedDB. Só o bloqueio (manual, por inatividade ou ao sair) apaga.
+  const SESSION = 'financ-vault-session:' + appId, RELOAD_GRACE_MS = 5000;
+  function sessionStore(mode, run) {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open('financ-vault-session', 1);
+      req.onupgradeneeded = () => req.result.createObjectStore('keys');
+      req.onerror = () => reject(req.error);
+      req.onsuccess = () => {
+        const db = req.result, tx = db.transaction('keys', mode), result = run(tx.objectStore('keys'));
+        tx.oncomplete = () => { db.close(); resolve(result.result); };
+        tx.onerror = tx.onabort = () => { db.close(); reject(tx.error); };
+      };
+    });
+  }
+  async function loadSessionKey() {
+    let key = await sessionStore('readonly', store => store.get(appId));
+    if (!(key instanceof CryptoKey)) {
+      key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+      await sessionStore('readwrite', store => store.put(key, appId));
+    }
+    vault.sessionKey = key;
+  }
+  const sessionReady = tabReady.then(loadSessionKey).catch(() => {});
+  function readSession() { try { return JSON.parse(sessionStorage.getItem(SESSION)); } catch (_) { return null; } }
+  function saveSession(extra) { if (vault.session) { try { sessionStorage.setItem(SESSION, JSON.stringify({ blob: vault.session, at: lastActivity, ...extra })); } catch (_) {} } }
+  function dropSession() { try { sessionStorage.removeItem(SESSION); } catch (_) {} }
+  const savedSession = readSession();
+  if (savedSession) panel.style.visibility = 'hidden';
+  async function resumeSession() {
+    try {
+      if (!savedSession || !savedSession.blob || typeof savedSession.at !== 'number' || !vault.exists) return false;
+      await legacyCleanup; await sessionReady;
+      await vault.resume(savedSession.blob);
+      // Só vale se a última interação foi há menos que o tempo de bloqueio automático.
+      const idle = Date.now() - savedSession.at;
+      if (idle < 0 || idle >= autoLockMs()) { vault.forget(); return false; }
+      // "Bloquear ao sair": recarregar esconde a página por instantes; ficar fora mais que isso exige o PIN.
+      const away = typeof savedSession.hiddenAt === 'number' ? Date.now() - savedSession.hiddenAt : 0;
+      if (vault.settings.lockOnHide && (away < 0 || away > RELOAD_GRACE_MS)) { vault.forget(); return false; }
+      return true;
+    } catch (_) { vault.forget(); return false; }
+  }
 
   const pinInput = get('vaultPin');
   const COPY = {
@@ -191,7 +237,7 @@
     if (!info || busy || blocked || step !== 'unlock') return;
     setBusy(true); get('vaultMessage').textContent = '';
     try {
-      await legacyCleanup;
+      await legacyCleanup; await sessionReady;
       const secret = await bio.evaluate(info.credentialId, info.prfSalt);
       try { await vault.unlockBiometric(secret); } finally { secret.fill(0); }
       failedAttempts = 0; get('vaultForm').reset(); finish();
@@ -202,8 +248,14 @@
       setBusy(false); pinInput.focus({ preventScroll: true });
     }
   }
-  bio.available().then(available => {
-    bioAvailable = available; refreshBiometric();
+  const resumed = resumeSession().then(ok => {
+    if (ok) finish(); else { dropSession(); panel.style.visibility = ''; }
+    return ok;
+  });
+  Promise.all([bio.available(), resumed]).then(([available, ok]) => {
+    bioAvailable = available;
+    if (ok) return;
+    refreshBiometric();
     // Ao abrir o app, pede a biometria direto; após um bloqueio manual, espera o toque na digital.
     const manual = session.take(MANUAL_LOCK);
     if (available && vault.biometric && step === 'unlock' && !manual && document.visibilityState === 'visible') unlockWithBiometric(true);
@@ -252,7 +304,7 @@
     lockButton.innerHTML = icon('lock', 16) + '<span>Bloquear</span>';
     lockButton.onclick = () => window.lockVault();
     tools.append(settings, lockButton); document.body.append(tools);
-    resolveReady(); lastActivity = Date.now();
+    resolveReady(); lastActivity = Date.now(); saveSession();
   }
   function showRecoveryCode(recovery, pin, renewed = false) {
     // Show once and require acknowledgement before entering the application.
@@ -290,7 +342,7 @@
     }
     setBusy(true);
     try {
-      await legacyCleanup;
+      await legacyCleanup; await sessionReady;
       if (!crypto.subtle) throw new Error('Abra o aplicativo em HTTPS ou localhost para proteger os dados.');
       if (!vault.exists) {
         const initial = Object.create(null);
@@ -323,7 +375,7 @@
   };
   window.lockVault = async () => {
     if (locking) return;
-    locking = true; root.classList.add('vault-locked'); session.set(MANUAL_LOCK);
+    locking = true; root.classList.add('vault-locked'); session.set(MANUAL_LOCK); dropSession();
     const message = document.createElement('section'); message.id = 'vaultGate'; message.className = 'vault-busy';
     message.innerHTML = '<div class="vault-badge">' + icon('lock', 22) + '</div><p>Salvando e bloqueando…</p>';
     document.body.append(message);
@@ -340,12 +392,17 @@
   const activity = () => {
     if (!vault.key || locking) return;
     if (Date.now() - lastActivity >= autoLockMs()) { window.lockVault(); return; }
-    lastActivity = Date.now();
+    lastActivity = Date.now(); saveSession();
   };
   ['pointerdown', 'keydown', 'touchstart'].forEach(name => window.addEventListener(name, activity, { passive: true }));
   const autoLockMs = () => vault.settings.autoLockMinutes * 60 * 1000;
   setInterval(() => { if (vault.key && !locking && Date.now() - lastActivity >= autoLockMs()) window.lockVault(); }, 5000);
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && vault.key && !locking && vault.settings.lockOnHide) window.lockVault(); });
+  // Ao esconder só marca o momento (recarregar também esconde a página); ao voltar para a aba, bloqueia.
+  document.addEventListener('visibilitychange', () => {
+    if (!vault.key || locking || !vault.settings.lockOnHide) return;
+    if (document.visibilityState === 'hidden') saveSession({ hiddenAt: Date.now() });
+    else window.lockVault();
+  });
   window.addEventListener('focus', activity);
   window.addEventListener('beforeunload', event => { if (vault.dirty || vault.pending) { event.preventDefault(); event.returnValue = ''; } });
   window.addEventListener('pagehide', () => { vault.forget(); if (releaseTab) releaseTab(); });
