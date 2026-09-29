@@ -8,6 +8,7 @@
   const matches = key => Boolean(LEGACY_KEYS[appId] && LEGACY_KEYS[appId].test(key));
   const icon = (name, size) => window.FinancIcons ? FinancIcons.svg(name, { size }) : '';
   const appName = root.dataset.vaultName || document.title.split(/\s[—–-]\s/)[0].trim();
+  const VERSION = root.dataset.vaultVersion ? 'v' + root.dataset.vaultVersion : '';
   const logoLink = document.querySelector('link[rel="apple-touch-icon"], link[rel="icon"]');
   const PIN_STEPS = new Set(['unlock', 'create', 'create-confirm', 'recover-pin', 'recover-confirm']);
   const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'bio', '0', 'del'];
@@ -43,9 +44,9 @@
     + '<button id="vaultSubmit" class="vault-primary" type="submit">Desbloquear</button></form>'
     + '<div class="vault-footer"><button id="vaultBack" class="vault-link" type="button" hidden>' + icon('arrow-left', 16) + 'Voltar</button><button id="vaultRecover" class="vault-link" type="button">' + icon('key', 16) + 'Esqueci o PIN</button></div>'
     + '<p id="vaultMessage" role="alert"></p>'
-    + (root.dataset.vaultVersion ? '<small class="vault-version"></small>' : '');
+    + (VERSION ? '<small class="vault-version"></small>' : '');
   panel.querySelector('.vault-app-name').textContent = appName;
-  if (root.dataset.vaultVersion) panel.querySelector('.vault-version').textContent = 'v' + root.dataset.vaultVersion;
+  if (VERSION) panel.querySelector('.vault-version').textContent = VERSION;
   if (logoLink) { const logo = panel.querySelector('.vault-logo'); logo.src = logoLink.getAttribute('href'); logo.hidden = false; }
   document.body.append(panel);
   const get = id => document.getElementById(id);
@@ -143,7 +144,10 @@
   function saveSession(extra) { if (vault.session) { try { sessionStorage.setItem(SESSION, JSON.stringify({ blob: vault.session, at: lastActivity, ...extra })); } catch (_) {} } }
   function dropSession() { try { sessionStorage.removeItem(SESSION); } catch (_) {} }
   const savedSession = readSession();
-  if (savedSession) panel.style.visibility = 'hidden';
+  // Enquanto reabre a sessão, mostra só o nome do app e a versão (sem piscar a tela de PIN).
+  const boot = document.createElement('div'); boot.id = 'vaultBoot'; boot.setAttribute('aria-live', 'polite');
+  boot.textContent = appName + (VERSION ? ' · ' + VERSION : '');
+  if (savedSession) { panel.style.visibility = 'hidden'; document.body.append(boot); }
   async function resumeSession() {
     try {
       if (!savedSession || !savedSession.blob || typeof savedSession.at !== 'number' || !vault.exists) return false;
@@ -249,6 +253,7 @@
     }
   }
   const resumed = resumeSession().then(ok => {
+    boot.remove();
     if (ok) finish(); else { dropSession(); panel.style.visibility = ''; }
     return ok;
   });
@@ -303,6 +308,7 @@
     lockButton.title = 'Bloquear aplicativo'; lockButton.setAttribute('aria-label', 'Bloquear aplicativo');
     lockButton.innerHTML = icon('lock', 16) + '<span>Bloquear</span>';
     lockButton.onclick = () => window.lockVault();
+    if (VERSION) { const ver = document.createElement('span'); ver.className = 'vault-tools-version'; ver.textContent = VERSION; ver.title = appName + ' ' + VERSION; tools.append(ver); }
     tools.append(settings, lockButton); document.body.append(tools);
     resolveReady(); lastActivity = Date.now(); saveSession();
   }
@@ -377,7 +383,7 @@
     if (locking) return;
     locking = true; root.classList.add('vault-locked'); session.set(MANUAL_LOCK); dropSession();
     const message = document.createElement('section'); message.id = 'vaultGate'; message.className = 'vault-busy';
-    message.innerHTML = '<div class="vault-badge">' + icon('lock', 22) + '</div><p>Salvando e bloqueando…</p>';
+    message.innerHTML = '<div class="vault-badge">' + icon('lock', 22) + '</div><p>Salvando e bloqueando…</p>' + (VERSION ? '<small class="vault-version">' + VERSION + '</small>' : '');
     document.body.append(message);
     try { await vault.lock(); location.reload(); }
     catch (_) {
@@ -497,7 +503,7 @@
       + [['system', 'monitor', 'Sistema'], ['dark', 'moon', 'Escuro'], ['light', 'sun', 'Claro']].map(([v, ic, l]) => '<button type="button" data-fs="theme" data-v="' + v + '" aria-pressed="' + (theme === v) + '" title="' + l + '">' + icon(ic, 15) + '<span>' + l + '</span></button>').join('') + '</div>', ' data-wide'));
     extraSections.forEach((sec, si) => { html += group(sec.title, sec.rows.map((r, ri) => actionRow('x' + si + '-' + ri, r.icon || 'chevron-right', r.label, r.description || '', r.danger ? 'fs-danger' : '')).join('')); });
     html += group('Sobre', row('database', 'Armazenamento', 'Cofre local criptografado (AES-256-GCM) · ' + Math.max(1, Math.round(size / 1024)) + ' KB neste navegador.')
-      + row('info', appName, 'Kit de segurança FINANC 1.2 · PIN, biometria e bloqueio automático.'));
+      + row('info', appName + (VERSION ? ' ' + VERSION : ''), 'Kit de segurança FINANC 1.3 · PIN, biometria e bloqueio automático.'));
     html += group('Zona de perigo', actionRow('destroy', 'trash', 'Apagar todos os dados deste app', 'Remove o cofre deste navegador. Não pode ser desfeito.', 'fs-danger'));
     container.innerHTML = '<div class="fs">' + html + '<p class="fs-toast" role="status" aria-live="polite"></p></div>';
     container.onclick = event => handle(event, container);
