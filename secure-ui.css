@@ -1,0 +1,137 @@
+/* FINANC vault UI. Usa os tokens do app (--bg, --surface, --accent...) com fallback no tema escuro padrão. */
+html.vault-locked body > :not(#vaultGate) { display:none !important; }
+html.vault-locked body { min-height:100vh; min-height:100dvh; display:grid; place-items:center; margin:0; padding:20px 16px; box-sizing:border-box; background:var(--bg, #0e1210); color:var(--ink, #eaf0ec);
+  background-image:radial-gradient(120% 60% at 50% 0%, color-mix(in srgb, var(--accent, #6fcf97) 10%, transparent), transparent 70%); }
+.fi { display:inline-block; flex-shrink:0; vertical-align:middle; }
+
+#vaultGate { box-sizing:border-box; width:min(100%, 380px); margin:0; padding:28px 24px 22px; text-align:center; background:var(--surface, #171d1a); color:var(--ink, #eaf0ec); border:1px solid var(--line, #2c3733); border-radius:24px; box-shadow:0 24px 64px rgba(0,0,0,.28); font:15px/1.5 'Space Grotesk', system-ui, sans-serif; }
+#vaultGate [hidden], .vault-dialog [hidden] { display:none !important; }
+.vault-brand { display:flex; align-items:center; gap:12px; margin-bottom:26px; text-align:left; }
+.vault-logo { width:40px; height:40px; border-radius:10px; display:block; }
+.vault-app-name { font-size:16px; font-weight:700; line-height:1.1; }
+.vault-eyebrow { display:flex; align-items:center; gap:5px; margin-top:3px; color:var(--accent, #6fcf97); font:11px/1.4 'IBM Plex Mono', monospace; letter-spacing:.08em; }
+.vault-badge { display:inline-grid; place-items:center; width:52px; height:52px; margin:0 auto 14px; border-radius:16px; color:var(--accent, #6fcf97); background:color-mix(in srgb, var(--accent, #6fcf97) 14%, transparent); border:1px solid color-mix(in srgb, var(--accent, #6fcf97) 30%, transparent); }
+.vault-badge-danger { color:var(--down, #e08585); background:color-mix(in srgb, var(--down, #e08585) 14%, transparent); border-color:color-mix(in srgb, var(--down, #e08585) 30%, transparent); }
+#vaultGate h1 { margin:0 0 6px; color:var(--ink, #eaf0ec); font-size:22px; line-height:1.2; letter-spacing:-.01em; }
+#vaultGate p { margin:0 0 4px; color:var(--ink-dim, #8fa098); font-size:13.5px; line-height:1.5; }
+#vaultForm { margin:20px 0 0; }
+
+/* PIN: input real invisível sobre as 6 caixas */
+.vault-pin-wrap { position:relative; margin:0 auto 20px; width:max-content; cursor:text; }
+.vault-pin-input { position:absolute; inset:0; width:100%; height:100%; opacity:0; border:0; padding:0; margin:0; font-size:16px; caret-color:transparent; }
+.vault-dots { display:flex; gap:10px; }
+.vault-dots span { width:40px; height:48px; border-radius:12px; background:var(--surface-2, #202824); border:1px solid var(--line, #2c3733); display:grid; place-items:center; transition:border-color .15s, background .15s; }
+.vault-dots span::after { content:''; width:12px; height:12px; border-radius:50%; background:var(--ink, #eaf0ec); transform:scale(0); transition:transform .15s; }
+.vault-dots span.filled { border-color:color-mix(in srgb, var(--accent, #6fcf97) 55%, var(--line, #2c3733)); }
+.vault-dots span.filled::after { transform:scale(1); }
+.vault-pin-input:focus-visible + .vault-dots span:not(.filled) { border-color:var(--accent, #6fcf97); }
+.vault-pin-input:focus-visible + .vault-dots span.filled + span:not(.filled), .vault-pin-input:focus-visible + .vault-dots span:first-child:not(.filled) { box-shadow:0 0 0 3px color-mix(in srgb, var(--accent, #6fcf97) 22%, transparent); }
+.vault-shake { animation:vault-shake .4s; }
+.vault-shake span { border-color:var(--down, #e08585) !important; }
+@keyframes vault-shake { 20%,60% { transform:translateX(-8px); } 40%,80% { transform:translateX(8px); } }
+
+/* Teclado numérico */
+.vault-keypad { display:grid; grid-template-columns:repeat(3, 1fr); gap:8px; margin:0 0 16px; }
+#vaultGate .vault-keypad button { height:54px; margin:0; display:grid; place-items:center; border-radius:14px; border:1px solid transparent; background:var(--surface-2, #202824); color:var(--ink, #eaf0ec); font:500 22px 'IBM Plex Mono', monospace; cursor:pointer; -webkit-tap-highlight-color:transparent; transition:background .12s, transform .08s; }
+#vaultGate .vault-keypad button:hover { border-color:var(--line, #2c3733); }
+#vaultGate .vault-keypad button:active { transform:scale(.96); background:color-mix(in srgb, var(--accent, #6fcf97) 18%, var(--surface-2, #202824)); }
+#vaultGate .vault-keypad button[data-key=del] { background:transparent; color:var(--ink-dim, #8fa098); }
+#vaultGate .vault-keypad .vault-key-bio { background:color-mix(in srgb, var(--accent, #6fcf97) 12%, transparent); color:var(--accent, #6fcf97); }
+#vaultGate .vault-keypad .vault-key-bio.is-off { visibility:hidden; }
+#vaultGate .vault-keypad button:disabled { opacity:.4; cursor:not-allowed; transform:none; }
+
+.vault-field { display:block; margin:0 0 16px; text-align:left; color:var(--ink-dim, #8fa098); font:11px/1.4 'IBM Plex Mono', monospace; }
+#vaultGate input:not(.vault-pin-input), .vault-dialog input { display:block; box-sizing:border-box; width:100%; padding:12px 14px; margin:7px 0 0; color:var(--ink, #eaf0ec); background:var(--surface-2, #202824); border:1px solid var(--line, #2c3733); border-radius:10px; outline:none; font:14px 'IBM Plex Mono', monospace; }
+#vaultGate input:not(.vault-pin-input):focus, .vault-dialog input:focus { border-color:var(--accent, #6fcf97); box-shadow:0 0 0 3px color-mix(in srgb, var(--accent, #6fcf97) 18%, transparent); }
+.vault-pin { text-align:center; font-size:22px !important; letter-spacing:.35em; }
+
+/* Botões */
+#vaultGate button, .vault-dialog button, #vaultTools button { display:inline-flex; align-items:center; justify-content:center; gap:8px; box-sizing:border-box; cursor:pointer; font:600 13px 'IBM Plex Mono', monospace; }
+.vault-primary, .vault-secondary { width:100%; min-height:46px; padding:12px 16px; margin:8px 0 0; border-radius:999px; }
+.vault-primary { border:0; background:var(--accent, #6fcf97); color:var(--bg, #0e1210); }
+.vault-secondary { border:1px solid var(--line, #2c3733); background:var(--surface-2, #202824); color:var(--ink, #eaf0ec); }
+#vaultGate .vault-primary:disabled { opacity:.45; cursor:not-allowed; }
+.vault-footer { display:flex; justify-content:center; gap:18px; margin-top:12px; }
+.vault-link { padding:8px 4px; border:0; background:none; color:var(--accent, #6fcf97); font-weight:500 !important; }
+.vault-link:hover { text-decoration:underline; text-underline-offset:3px; }
+#vaultGate :focus-visible, #vaultTools :focus-visible, .vault-dialog :focus-visible { outline:2px solid var(--accent, #6fcf97); outline-offset:2px; }
+
+#vaultRecoveryCode { margin:16px 0 8px !important; padding:14px; border-radius:12px; background:var(--surface-2, #202824); border:1px dashed var(--line, #2c3733); overflow-wrap:anywhere; color:var(--ink, #eaf0ec) !important; font:13px/1.7 'IBM Plex Mono', monospace !important; user-select:all; }
+#vaultMessage { min-height:1.4em; margin-top:10px !important; color:var(--down, #e08585) !important; font:12px/1.5 'IBM Plex Mono', monospace !important; }
+#vaultSaveError { color:var(--down, #e08585); font:12px 'IBM Plex Mono', monospace; }
+#vaultSaveError:not(:empty) { position:fixed; top:0; left:0; right:0; z-index:100000; padding:12px; background:#651d1d; color:white; }
+#vaultGate.vault-busy p { color:var(--ink, #eaf0ec); }
+
+/* Grupo flutuante Segurança + Bloquear. Posição: data-vault-lock="bottom-right|bottom-left|top-right" no <html>. */
+#vaultTools { position:fixed; z-index:1000; right:12px; bottom:calc(var(--vault-lock-offset, 12px) + env(safe-area-inset-bottom, 0px)); display:flex; padding:3px; gap:2px; border-radius:999px; border:1px solid var(--line, #2c3733); background:color-mix(in srgb, var(--surface, #171d1a) 88%, transparent); backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); box-shadow:0 6px 20px rgba(0,0,0,.25); }
+#vaultTools button { height:34px; margin:0; padding:0 12px; border:0; border-radius:999px; background:transparent; color:var(--ink, #eaf0ec); }
+#vaultTools button:hover { background:var(--surface-2, #202824); color:var(--accent, #6fcf97); }
+#vaultSettingsBtn { width:34px; padding:0 !important; color:var(--ink-dim, #8fa098) !important; }
+html[data-vault-lock=bottom-left] #vaultTools { right:auto; left:12px; }
+html[data-vault-lock=top-right] #vaultTools { bottom:auto; top:calc(12px + env(safe-area-inset-top, 0px)); }
+
+.vault-dialog { box-sizing:border-box; width:min(calc(100% - 32px), 400px); border-radius:20px; padding:22px; background:var(--surface, #171d1a); color:var(--ink, #eaf0ec); border:1px solid var(--line, #2c3733); font-family:'Space Grotesk', system-ui, sans-serif; }
+.vault-dialog::backdrop { background:rgba(0,0,0,.7); backdrop-filter:blur(2px); }
+.vault-dialog-head { display:flex; align-items:center; gap:12px; margin-bottom:8px; }
+.vault-dialog-head .vault-badge { width:40px; height:40px; margin:0; border-radius:12px; flex-shrink:0; }
+.vault-dialog-head p { margin:0; font-size:14px; line-height:1.4; }
+.vault-dialog-actions { display:flex; gap:8px; margin-top:14px; }
+.vault-dialog-actions button { white-space:nowrap; flex:1; min-height:44px; padding:10px 16px; border-radius:999px; }
+.vault-dialog-actions button:not([type=button]) { border:0; background:var(--accent, #6fcf97); color:var(--bg, #0e1210); }
+.vault-dialog-actions button.vault-dialog-primary { border:0; background:var(--accent, #6fcf97); color:var(--bg, #0e1210); }
+.vault-dialog-actions button[type=button]:not(.vault-dialog-primary) { border:1px solid var(--line, #2c3733); background:var(--surface-2, #202824); color:var(--ink, #eaf0ec); }
+
+.vault-dim { display:block; color:var(--ink-dim, #8fa098); font-size:12.5px; line-height:1.45; margin:2px 0 0; }
+.vault-code { margin:12px 0 4px; padding:12px; border-radius:12px; background:var(--surface-2, #202824); border:1px dashed var(--line, #2c3733); overflow-wrap:anywhere; font:13px/1.7 'IBM Plex Mono', monospace; user-select:all; }
+.vault-dialog-actions button.vault-dialog-danger { border:0; background:var(--down, #e08585); color:var(--bg, #0e1210); }
+
+/* Configurações: tela cheia (fs-sheet) ou aba do app (FinancSettings.mount) */
+.fs-sheet { box-sizing:border-box; width:min(100%, 560px); max-width:100%; height:100%; max-height:100%; margin:0 0 0 auto; padding:0; border:0; border-left:1px solid var(--line, #2c3733); background:var(--bg, #0e1210); color:var(--ink, #eaf0ec); font-family:'Space Grotesk', system-ui, sans-serif; }
+.fs-sheet::backdrop { background:rgba(0,0,0,.55); backdrop-filter:blur(2px); }
+.fs-sheet[open] { display:flex; flex-direction:column; animation:fs-in .2s ease-out; }
+@keyframes fs-in { from { transform:translateX(24px); opacity:0; } }
+.fs-head { display:flex; align-items:center; gap:10px; padding:calc(12px + env(safe-area-inset-top, 0px)) 16px 12px; border-bottom:1px solid var(--line, #2c3733); background:var(--surface, #171d1a); }
+.fs-head h2 { margin:0; font-size:18px; line-height:1.2; }
+.fs-head span { font:11px 'IBM Plex Mono', monospace; color:var(--ink-dim, #8fa098); }
+.fs-back { display:grid; place-items:center; width:40px; height:40px; border-radius:50%; border:1px solid var(--line, #2c3733); background:var(--surface-2, #202824); color:var(--ink, #eaf0ec); cursor:pointer; }
+.fs-body { flex:1; overflow:auto; padding:8px 16px calc(24px + env(safe-area-inset-bottom, 0px)); }
+.fs { font-family:'Space Grotesk', system-ui, sans-serif; color:var(--ink, #eaf0ec); }
+.fs-group { margin:18px 0 0; }
+.fs-title { margin:0 0 8px 4px; font:600 11px 'IBM Plex Mono', monospace; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-dim, #8fa098); }
+.fs-list { background:var(--surface, #171d1a); border:1px solid var(--line, #2c3733); border-radius:16px; overflow:hidden; }
+.fs-row { display:flex; align-items:center; gap:12px; width:100%; box-sizing:border-box; min-height:60px; padding:12px 14px; border:0; border-top:1px solid var(--line, #2c3733); background:none; color:inherit; text-align:left; font:inherit; }
+.fs-row:first-child { border-top:0; }
+.fs-row[data-wide] { flex-wrap:wrap; }
+.fs-row[data-wide] .fs-seg { flex-basis:100%; }
+.fs-action { cursor:pointer; }
+.fs-action:hover { background:var(--surface-2, #202824); }
+.fs-action > .fi:last-child { color:var(--ink-dim, #8fa098); }
+.fs-ic { display:grid; place-items:center; width:34px; height:34px; flex-shrink:0; border-radius:10px; background:var(--surface-2, #202824); color:var(--ink-dim, #8fa098); }
+.fs-text { flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; }
+.fs-text b { font-size:14.5px; font-weight:600; }
+.fs-text span { font-size:12.5px; line-height:1.4; color:var(--ink-dim, #8fa098); }
+.fs-accent .fs-ic, .fs-accent b { color:var(--accent, #6fcf97); }
+.fs-danger .fs-ic, .fs-danger b { color:var(--down, #e08585); }
+.fs-danger .fs-ic { background:color-mix(in srgb, var(--down, #e08585) 12%, transparent); }
+.fs-switch { position:relative; flex-shrink:0; width:46px; height:28px; padding:0; border-radius:999px; border:1px solid var(--line, #2c3733); background:var(--surface-2, #202824); cursor:pointer; transition:background .15s; }
+.fs-switch span { position:absolute; top:3px; left:3px; width:20px; height:20px; border-radius:50%; background:var(--ink-dim, #8fa098); transition:transform .15s, background .15s; }
+.fs-switch[aria-checked=true] { background:var(--accent, #6fcf97); border-color:var(--accent, #6fcf97); }
+.fs-switch[aria-checked=true] span { transform:translateX(18px); background:var(--bg, #0e1210); }
+.fs-switch:disabled { opacity:.4; cursor:not-allowed; }
+.fs-select { flex-shrink:0; padding:8px 10px; border-radius:10px; border:1px solid var(--line, #2c3733); background:var(--surface-2, #202824); color:var(--ink, #eaf0ec); font:13px 'IBM Plex Mono', monospace; }
+.fs-seg { display:flex; gap:4px; padding:4px; border-radius:999px; border:1px solid var(--line, #2c3733); background:var(--surface-2, #202824); }
+.fs-seg button { flex:1; display:inline-flex; align-items:center; justify-content:center; gap:6px; padding:8px 6px; border:0; border-radius:999px; background:none; color:var(--ink-dim, #8fa098); font:600 12px 'IBM Plex Mono', monospace; cursor:pointer; }
+.fs-seg button[aria-pressed=true] { background:var(--surface, #171d1a); color:var(--accent, #6fcf97); box-shadow:0 1px 3px rgba(0,0,0,.2); }
+.fs-toast { min-height:1.4em; margin:14px 4px 0; font:12px/1.5 'IBM Plex Mono', monospace; color:var(--accent, #6fcf97); }
+.fs-toast.fs-bad { color:var(--down, #e08585); }
+.fs :focus-visible, .fs-sheet :focus-visible { outline:2px solid var(--accent, #6fcf97); outline-offset:2px; }
+@media (max-width:560px) { .fs-sheet { border-left:0; } }
+@media (prefers-reduced-motion: reduce) { .fs-sheet[open] { animation:none; } .fs-switch, .fs-switch span { transition:none; } }
+@media (max-width:360px) { .vault-dots { gap:6px; } .vault-dots span { width:36px; height:44px; } #vaultGate { padding:24px 16px 18px; } }
+@media (prefers-reduced-motion: reduce) { .vault-shake { animation:none; } .vault-dots span, .vault-dots span::after, .vault-keypad button { transition:none; } }
+@media (max-width:480px) { #vaultLock { width:34px; padding:0 !important; } #vaultLock span { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; } }
+/* Blindagem contra estilos globais dos apps (select, h2, button) */
+.fs .fs-select { width:auto !important; min-width:0; max-width:none; flex:0 0 auto; margin:0; height:auto; }
+.fs-head h2 { border:0 !important; padding:0 !important; margin:0 !important; color:var(--ink, #eaf0ec) !important; font:700 18px/1.2 'Space Grotesk', system-ui, sans-serif !important; }
+.fs .fs-row, .fs .fs-seg button, .fs .fs-switch, .fs-back { margin:0; box-shadow:none; text-transform:none; letter-spacing:normal; }
+.fs .fs-title { border:0; padding:0; }
