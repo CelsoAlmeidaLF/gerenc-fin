@@ -425,7 +425,7 @@
     dialog.onclose = () => { input.value = ''; confirm.value = ''; dialog.remove(); resolve(result); };
     form.append(head, input, confirm, actions); dialog.append(form); document.body.append(dialog); dialog.showModal(); input.focus();
   });
-  /* ───────── Menu de perfil: avatar no topo que abre um painel lateral ───────── */
+  /* ───────── Menu do app: botão de 3 pontos que abre um painel lateral à esquerda ───────── */
   function avatarMarkup(size) {
     if (logoLink) return '<img src="' + esc(logoLink.getAttribute('href')) + '" alt="" width="' + size + '" height="' + size + '">';
     const initials = appName.split(/[\s-]+/).filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase();
@@ -433,12 +433,14 @@
   }
   function mountProfile() {
     const button = document.createElement('button'); button.id = 'vaultProfileBtn'; button.type = 'button';
-    button.setAttribute('aria-label', 'Abrir menu do perfil'); button.setAttribute('aria-haspopup', 'dialog'); button.setAttribute('aria-expanded', 'false'); button.title = 'Menu do perfil';
-    button.innerHTML = '<span class="vp-avatar">' + avatarMarkup(34) + '</span><span class="vp-dot" aria-hidden="true"></span>';
+    button.setAttribute('aria-haspopup', 'dialog'); button.setAttribute('aria-expanded', 'false');
+    button.setAttribute('aria-label', 'Abrir menu'); button.title = 'Menu';
+    button.innerHTML = icon('more-vertical', 20);
     button.onclick = () => openProfile(button);
-    // O app pode reservar um lugar no próprio cabeçalho (data-vault-profile-slot); sem ele, o avatar flutua no canto.
+    // Botão de 3 pontos ao lado do título do app; o painel abre pela esquerda.
+    // O app indica o lugar com data-vault-profile-slot; sem ele, entra no início da página.
     const slot = document.querySelector('[data-vault-profile-slot]');
-    if (slot) { button.classList.add('vp-inline'); slot.append(button); } else document.body.append(button);
+    if (slot) slot.append(button); else document.body.prepend(button);
   }
   function themeRow() {
     if (!themeSupported) return '';
@@ -676,6 +678,12 @@
   };
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
-    navigator.serviceWorker.addEventListener('controllerchange', () => { if (!vault.key) location.reload(); });
+    // Versão nova do app: recarrega para usar os arquivos novos, mas só na tela de PIN parada.
+    // Nunca na primeira instalação (não há versão antiga) nem com PIN sendo digitado ou verificado.
+    const hadController = Boolean(navigator.serviceWorker.controller);
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController || vault.key || locking || busy || pinInput.value || document.activeElement === get('vaultRecovery')) return;
+      location.reload();
+    });
   }
 })();

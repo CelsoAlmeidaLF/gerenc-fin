@@ -309,7 +309,7 @@
     renderSummary();
   }
 
-  // ---------- ajustes ----------
+  // ---------- ações no menu do perfil ----------
   var clickById = function(id){ return function(){ document.getElementById(id).click(); }; };
   FinancSettings.addSection({ title: 'Dados e backup', rows: [
     { icon: 'download', label: 'Exportar backup (JSON)', description: 'Arquivo criptografado com PIN próprio.', onClick: clickById('btnExport') },
@@ -326,7 +326,6 @@
       document.querySelectorAll('section.panel').forEach(function(p){p.classList.remove('active');});
       btn.classList.add('active');
       document.getElementById('panel-'+btn.dataset.tab).classList.add('active');
-      if (btn.dataset.tab === 'ajustes') FinancSettings.mount(document.getElementById('settingsMount'));
     });
   });
 

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="pt-BR" class="vault-locked" data-vault-version="1.4.0" data-vault-app="gerenc-fin" data-vault-name="Livro-Caixa" data-vault-themes="system dark light">
+<html lang="pt-BR" class="vault-locked" data-vault-version="1.4.1" data-vault-app="gerenc-fin" data-vault-name="Livro-Caixa" data-vault-themes="system dark light">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -48,7 +48,6 @@
     display: flex;
     align-items: center;
     gap: 12px;
-    justify-content: space-between;
     border-bottom: 1px solid var(--line);
     padding-bottom: 14px;
     margin-bottom: 22px;
@@ -367,9 +366,9 @@
 <div class="wrap">
 
   <header class="top">
+    <div class="vp-bar" data-vault-profile-slot></div>
     <h1>Livro-Caixa</h1>
     <div class="data-hoje" id="dataHoje"></div>
-    <div class="top-profile" data-vault-profile-slot></div>
   </header>
 
   <div class="ledger-summary">
@@ -384,7 +383,6 @@
     <button data-tab="entradas">Entradas</button>
     <button data-tab="cartao">Cartão</button>
     <button data-tab="dividas">Dívidas</button>
-    <button data-tab="ajustes" aria-label="Ajustes"><i data-icon="settings" data-size="15"></i> Ajustes</button>
   </nav>
 
   <!-- DESPESAS -->
@@ -454,12 +452,6 @@
     <div class="list" id="listDividasAbertas"></div>
     <div class="section-title">quitadas</div>
     <div class="list" id="listDividasQuitadas"></div>
-  </section>
-
-  <!-- AJUSTES -->
-  <section class="panel" id="panel-ajustes">
-    <div class="section-title">configurações</div>
-    <div id="settingsMount"></div>
   </section>
 
   <footer class="util">
