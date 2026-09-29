@@ -55,14 +55,50 @@
     status.textContent = 'Não foi possível salvar as últimas alterações. Mantenha esta página aberta e tente bloquear novamente para salvar.';
   });
   window.secureStorage = vault;
-  let releaseTab;
-  const tabReady = navigator.locks ? new Promise((resolve, reject) => {
-    navigator.locks.request('financ-vault:' + appId, { ifAvailable: true }, async lock => {
-      if (!lock) { reject(new Error('Feche a outra aba deste aplicativo para continuar.')); return; }
-      resolve(); await new Promise(done => { releaseTab = done; });
-    }).catch(reject);
-  }) : Promise.reject(new Error('Este navegador não suporta o bloqueio seguro de abas. Use um navegador atualizado.'));
-  const block = error => { blocked = true; get('vaultMessage').textContent = error.message; setBusy(true); };
+  // Uma aba por vez. Ao recarregar (bloqueio, atualização do app) a página anterior ainda pode segurar a trava
+  // por alguns instantes, e no celular uma aba congelada em segundo plano segura sem aparecer: por isso tenta
+  // de novo antes de desistir e oferece assumir o controle nesta aba.
+  const LOCK_NAME = 'financ-vault:' + appId, TAKEOVER = 'financ-vault-takeover:' + appId;
+  const TAB_BUSY = 'O aplicativo está aberto em outra aba ou janela.';
+  let releaseTab, tabOwned = false;
+  function holdTab(options) {
+    return new Promise((resolve, reject) => {
+      navigator.locks.request(LOCK_NAME, options, async lock => {
+        if (!lock) { resolve(false); return; }
+        tabOwned = true; resolve(true);
+        await new Promise(done => { releaseTab = done; });
+      }).catch(error => { if (tabOwned) lostTab(); else reject(error); });
+    });
+  }
+  async function acquireTab() {
+    if (!navigator.locks) throw new Error('Este navegador não suporta o bloqueio seguro de abas. Use um navegador atualizado.');
+    if (session.take(TAKEOVER)) { await holdTab({ steal: true }); return; }
+    for (let i = 0; i < 16; i++) {
+      if (await holdTab({ ifAvailable: true })) return;
+      await new Promise(done => setTimeout(done, 250));
+    }
+    throw new Error(TAB_BUSY);
+  }
+  function takeOver() { session.set(TAKEOVER); location.reload(); }
+  // Outra aba assumiu: salva o que der (o cofre recusa gravar por cima de dados mais novos) e esquece a chave.
+  function lostTab() {
+    tabOwned = false; locking = true; root.classList.add('vault-locked');
+    const save = vault.key ? vault.flush().catch(() => {}) : Promise.resolve();
+    save.finally(() => vault.forget());
+    const old = get('vaultGate'); if (old) old.remove();
+    const gate = document.createElement('section'); gate.id = 'vaultGate';
+    gate.innerHTML = '<div class="vault-badge">' + icon('lock', 22) + '</div><h1>Aberto em outra aba</h1><p>Este aplicativo passou a ser usado em outra aba ou janela. Para continuar aqui, assuma o controle.</p>';
+    const button = document.createElement('button'); button.type = 'button'; button.className = 'vault-primary'; button.textContent = 'Usar nesta aba';
+    button.onclick = takeOver; gate.append(button); document.body.append(gate);
+  }
+  const tabReady = acquireTab();
+  const block = error => {
+    blocked = true; get('vaultMessage').textContent = error.message; setBusy(true);
+    if (error.message !== TAB_BUSY || get('vaultTakeover')) return;
+    const button = document.createElement('button'); button.id = 'vaultTakeover'; button.type = 'button'; button.className = 'vault-secondary';
+    button.textContent = 'Usar nesta aba'; button.onclick = takeOver;
+    get('vaultMessage').after(button);
+  };
   // Prevent an early unhandled rejection while the user is typing.
   tabReady.catch(block);
   async function clearLegacySessionKeys() {

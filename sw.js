@@ -1,4 +1,4 @@
-const CACHE_NAME = 'livro-caixa-v8-bio-passkey';
+const CACHE_NAME = 'livro-caixa-v9-tab-takeover';
 const APP_SHELL = [
   './index.html',
   './app.js',
