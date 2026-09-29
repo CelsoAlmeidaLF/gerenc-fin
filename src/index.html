@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="pt-BR" class="vault-locked" data-vault-version="1.5.1" data-vault-app="gerenc-fin" data-vault-name="Livro-Caixa" data-vault-themes="system dark light">
+<html lang="pt-BR" class="vault-locked" data-vault-version="1.5.2" data-vault-app="gerenc-fin" data-vault-name="Livro-Caixa" data-vault-themes="system dark light">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -439,7 +439,8 @@
 
   <footer class="util">
     <div class="status" id="saveStatus">dados protegidos por criptografia</div>
-    <div class="buttons">
+    <!-- Backup, certificado e bloqueio ficam em Configurações (menu ⋮), que aciona estes botões ocultos. -->
+    <div class="buttons" style="display:none">
       <button id="btnExport"><i data-icon="download" data-size="14"></i> Exportar JSON</button>
       <button id="btnImport"><i data-icon="upload" data-size="14"></i> Importar JSON</button>
       <button id="btnReset"><i data-icon="trash" data-size="14"></i> Limpar tudo</button>
