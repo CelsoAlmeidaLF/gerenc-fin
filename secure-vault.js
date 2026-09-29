@@ -62,6 +62,7 @@
       this.storage = storage; this.appId = appId; this.storageKey = 'financ-vault-v1:' + appId;
       this.onError = onError; this.key = null; this.values = null; this.envelope = null;
       this.pending = null; this.dirty = false; this.lastStored = null; this.closing = false; this.prefs = null;
+      this.sessionKey = null; this.session = null;
     }
     get exists() { return this.storage.getItem(this.storageKey) !== null; }
     context(part) { return this.appId + ':vault-v1:' + part; }
@@ -73,6 +74,7 @@
       try {
         this.key = await crypto.subtle.importKey('raw', rawKey, 'AES-GCM', false, ['encrypt', 'decrypt']);
         this.values = Object.assign(Object.create(null), initial);
+        await this.sealSession(b64(rawKey));
         this.envelope = { version: 1, appId: this.appId,
           password: await protect(b64(rawKey), pin, this.context('password')),
           recovery: await protectWithSecret(b64(rawKey), recovery, this.context('recovery')) };
@@ -170,7 +172,18 @@
         this.prefs = prefs;
         this.key = key; this.values = Object.assign(Object.create(null), values); this.envelope = envelope;
         this.lastStored = stored; this.closing = false;
+        await this.sealSession(rawB64);
       } finally { rawKey.fill(0); }
+    }
+    // Sessão da aba: a chave bruta é cifrada por uma chave de sessão não-exportável (fornecida pela interface),
+    // para reabrir o cofre ao recarregar a página sem pedir o PIN. Só o blob cifrado sai daqui.
+    async sealSession(rawB64) {
+      this.session = this.sessionKey ? await seal(rawB64, this.sessionKey, this.context('session')) : null;
+    }
+    async resume(blob) {
+      if (!this.sessionKey) throw new Error('Sessão indisponível.');
+      const { stored, envelope } = this.readEnvelope();
+      await this.openWith(await open(blob, this.sessionKey, this.context('session')), envelope, stored);
     }
     // O código usado deixa de valer: um novo é gerado e devolvido para ser exibido uma única vez.
     async resetPassword(recovery, newPin, nextRecovery = recoveryCode()) {
@@ -213,7 +226,7 @@
       const keys = Array.from({ length: this.storage.length }, (_, i) => this.storage.key(i));
       for (const key of keys) if (matches(key) && this.storage.getItem(key) === this.getItem(key)) this.storage.removeItem(key);
     }
-    forget() { this.key = null; this.values = null; this.envelope = null; this.prefs = null; this.closing = false; }
+    forget() { this.key = null; this.values = null; this.envelope = null; this.prefs = null; this.session = null; this.closing = false; }
     async lock() { this.closing = true; try { await this.flush(); this.forget(); } catch (error) { this.closing = false; throw error; } }
   }
 
