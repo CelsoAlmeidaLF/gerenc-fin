@@ -16,6 +16,10 @@
   const DECLINED = 'financ-vault-bio-declined:' + appId, MANUAL_LOCK = 'financ-vault-manual-lock:' + appId;
   // O tema segue o sistema do aparelho. Apaga a escolha manual que versões antigas salvavam.
   try { nativeStorage.removeItem('financ-theme:' + appId); } catch (_) {}
+  // "Instalar app" aparece em Configurações quando o navegador oferece a instalação.
+  let installPrompt = null;
+  addEventListener('beforeinstallprompt', event => { event.preventDefault(); installPrompt = event; });
+  addEventListener('appinstalled', () => { installPrompt = null; });
   const session = { take(key) { try { const v = sessionStorage.getItem(key); sessionStorage.removeItem(key); return v; } catch (_) { return null; } }, set(key) { try { sessionStorage.setItem(key, '1'); } catch (_) {} } };
 
   // O PIN é local ao cofre: gerenciadores de senha (Proton Pass, 1Password, Bitwarden, LastPass, Dashlane) não devem sugerir nem salvar.
@@ -559,6 +563,7 @@
       + row('eye-off', 'Bloquear ao sair do app', 'Bloqueia ao trocar de aba, minimizar ou apagar a tela.', toggle('hide', cfg.lockOnHide))
       + actionRow('recovery', 'shield-check', 'Novo código de recuperação', 'Gera outro código e invalida o anterior.')
       + actionRow('lock', 'lock', 'Bloquear agora', '', 'fs-accent'));
+    if (installPrompt) html += group('App', actionRow('install', 'download', 'Instalar app', 'Coloca o ' + appName + ' na tela inicial, como um app.'));
     extraSections.forEach((sec, si) => { html += group(sec.title, sec.rows.map((r, ri) => actionRow('x' + si + '-' + ri, r.icon || 'chevron-right', r.label, r.description || '', r.danger ? 'fs-danger' : '')).join('')); });
     html += group('Sobre', row('database', 'Armazenamento', 'Cofre local criptografado (AES-256-GCM) · ' + Math.max(1, Math.round(size / 1024)) + ' KB neste navegador.')
       + row('info', appName + (VERSION ? ' ' + VERSION : ''), 'Kit de segurança FINANC 1.3 · PIN, biometria e bloqueio automático.'));
@@ -606,6 +611,9 @@
         if (typeof code === 'string') { await showCodeDialog(code); say('Novo código de recuperação ativo.'); }
       } else if (kind === 'lock') {
         window.lockVault(); return;
+      } else if (kind === 'install') {
+        const prompt = installPrompt; installPrompt = null;
+        if (prompt) { prompt.prompt(); const { outcome } = await prompt.userChoice; say(outcome === 'accepted' ? 'App instalado.' : 'Instalação cancelada.'); }
       } else if (kind === 'destroy') {
         if (!await confirmDanger('Apagar todos os dados?', 'O cofre deste app será removido deste navegador, incluindo PIN, biometria e todos os registros. Faça um backup antes, se precisar.', 'Apagar tudo')) { el.disabled = false; return; }
         const credential = vault.biometric;
