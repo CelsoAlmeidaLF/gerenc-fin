@@ -45,6 +45,17 @@
     state.card.faturas=list(card.faturas).map(function(x){ return {id:safeId(x.id),total:safeAmount(x.total),dataFechamento:safeDate(x.dataFechamento),despesaId:safeId(x.despesaId)}; }).filter(function(x){return x.dataFechamento;});
     state.debts=list(source.debts).map(function(x){ var parcelas=Math.min(1200,Math.max(1,Math.trunc(Number(x.parcelas)||1))); return {id:safeId(x.id),valorParcela:safeAmount(x.valorParcela),descricao:safeText(x.descricao),parcelas:parcelas,parcelaAtual:Math.min(parcelas,Math.max(1,Math.trunc(Number(x.parcelaAtual)||1))),vencimento:safeDate(x.vencimento),pago:x.pago===true}; }).filter(function(x){return x.descricao&&x.vencimento;});
   }
+  // Com o PIN FINANC, o certificado é o FINANC (um só para todos os apps; o kit já trouxe o antigo deste app).
+  // Sem ele (app ainda com PIN próprio), segue o certificado próprio guardado no cofre do app.
+  var FinancCert = window.FinancCert;
+  function certFor(id){
+    if (FinancCert.linked) return (id && FinancCert.find(id)) || FinancCert.current;
+    try { var raw=localStorage.getItem(DEVICE_CERT_KEY); return raw ? JSON.parse(raw) : null; } catch(e) { return null; }
+  }
+  async function saveCert(cert){
+    if (FinancCert.linked) { await FinancCert.add(cert); return; }
+    localStorage.setItem(DEVICE_CERT_KEY,JSON.stringify(cert)); await localStorage.flush();
+  }
   function getDeviceCert(){
     try { var raw=localStorage.getItem(DEVICE_CERT_KEY); if (raw) return JSON.parse(raw); } catch(e) {}
     var bytes=crypto.getRandomValues(new Uint8Array(32));
@@ -72,8 +83,8 @@
   document.getElementById('gateCertFile').addEventListener('change',function(e){
     var file=e.target.files[0]; if(!file) return;
     var reader=new FileReader(); reader.onload=async function(ev){
-      try { var cert=await window.importCertificate(JSON.parse(ev.target.result), 'gerenc-fin:certificate'); if(!cert || cert.version!==1 || !cert.id || !cert.secret) throw new Error();
-        localStorage.setItem(DEVICE_CERT_KEY,JSON.stringify(cert)); await localStorage.flush(); document.getElementById('gateStatus').textContent='Certificado importado. Recarregando…'; setTimeout(function(){ location.reload(); },300);
+      try { var cert=await window.importCertificate(JSON.parse(ev.target.result), 'gerenc-fin:certificate'); if(!cert || !cert.id || !cert.secret) throw new Error();
+        await saveCert(cert); document.getElementById('gateStatus').textContent='Certificado importado. Recarregando…'; setTimeout(function(){ location.reload(); },300);
       } catch(err) { document.getElementById('gateStatus').textContent='Arquivo de certificado inválido.'; }
     }; reader.readAsText(file); e.target.value='';
   });
@@ -88,8 +99,8 @@
         const meta = JSON.parse(metaRaw);
         const pin = await window.askSecret('Digite o PIN ou senha anterior para migrar o livro-caixa. Cancele para usar a recuperação antiga:', false, true);
         if (pin) {
-          const cert = getDeviceCert();
-          if (meta.certProtected && meta.certId !== cert.id) throw new Error('Importe o certificado antigo antes de migrar os dados.');
+          const cert = certFor(meta.certId);
+          if (meta.certProtected && (!cert || meta.certId !== cert.id)) throw new Error('Importe o certificado antigo antes de migrar os dados.');
           const key = await deriveKey(pin, fromB64(meta.salt), meta.certProtected ? cert : null);
           await unseal(meta.verifier, key);
           normalizeState(await unseal(JSON.parse(secureRaw), key));
@@ -314,8 +325,8 @@
   FinancSettings.addSection({ title: 'Dados e backup', rows: [
     { icon: 'download', label: 'Exportar backup (JSON)', description: 'Arquivo criptografado com PIN próprio.', onClick: clickById('btnExport') },
     { icon: 'upload', label: 'Importar backup (JSON)', description: 'Restaura um backup exportado.', onClick: clickById('btnImport') },
-    { icon: 'shield', label: 'Exportar certificado', description: 'Cópia protegida do certificado digital.', onClick: clickById('btnExportCert') },
-    { icon: 'shield-check', label: 'Importar certificado', description: 'Usa o certificado de outro aparelho.', onClick: clickById('btnImportCert') },
+    { icon: 'shield', label: 'Exportar certificado FINANC', description: 'Cópia protegida; o mesmo certificado em todos os apps.', onClick: clickById('btnExportCert') },
+    { icon: 'shield-check', label: 'Importar certificado', description: 'Usa o certificado FINANC de outro aparelho.', onClick: clickById('btnImportCert') },
     { icon: 'trash', label: 'Limpar lançamentos', description: 'Apaga despesas, entradas, cartão e dívidas.', danger: true, onClick: clickById('btnReset') },
   ] });
 
@@ -456,8 +467,8 @@
         } else if (payload && payload.encrypted) {
           var pin=await window.askSecret('Digite a senha do backup antigo:', false, true);
           if (!pin) return;
-          var cert=getDeviceCert();
-          if (payload.certProtected && payload.certId !== cert.id) throw new Error('certificado do dispositivo não corresponde');
+          var cert=certFor(payload.certId);
+          if (payload.certProtected && (!cert || payload.certId !== cert.id)) throw new Error('certificado do dispositivo não corresponde');
           var key=await deriveKey(pin,fromB64(payload.salt),payload.certProtected ? cert : null);
           data=await unseal({iv:payload.iv,ciphertext:payload.ciphertext},key);
         } else {
@@ -481,7 +492,7 @@
   });
 
   document.getElementById('btnExportCert').addEventListener('click', async function(){
-    try { const cert=getDeviceCert(); await window.exportProtected(cert, 'gerenc-fin:certificate', 'gerenc-fin-'+cert.id+'.cert.secure.json'); }
+    try { if (FinancCert.linked) await FinancCert.export(); else { const cert=getDeviceCert(); await window.exportProtected(cert, 'gerenc-fin:certificate', 'gerenc-fin-'+cert.id+'.cert.secure.json'); } }
     catch (_) { alert('Não foi possível exportar o certificado protegido.'); }
   });
   document.getElementById('btnImportCert').addEventListener('click', function(){ document.getElementById('importCertFile').click(); });
@@ -491,10 +502,9 @@
     reader.onload=async function(ev){
       try {
         var cert=await window.importCertificate(JSON.parse(ev.target.result), 'gerenc-fin:certificate');
-        if (!cert || cert.version!==1 || !cert.id || !cert.secret) throw new Error('certificado inválido');
-        if (!confirm('Importar este certificado substituirá o certificado deste navegador. Continuar?')) return;
-        localStorage.setItem(DEVICE_CERT_KEY,JSON.stringify(cert));
-        await localStorage.flush();
+        if (!cert || !cert.id || !cert.secret) throw new Error('certificado inválido');
+        if (!confirm(FinancCert.linked ? 'Importar este certificado? Ele passa a ser o certificado FINANC de todos os apps; o atual continua guardado para os backups antigos.' : 'Importar este certificado substituirá o certificado deste navegador. Continuar?')) return;
+        await saveCert(cert);
         alert('Certificado importado. Recarregue o aplicativo antes de abrir o backup.');
       } catch(err) { alert('Arquivo de certificado inválido.'); }
     };
