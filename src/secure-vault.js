@@ -40,6 +40,14 @@
     if (!pinOK(pin)) throw new Error('Use um PIN de 6 números.');
     return protectWithSecret(value, pin, context);
   }
+  // Arquivos exportados (backup, certificado): senha longa, porque o arquivo pode ir parar em qualquer lugar
+  // e um PIN de 6 números cai rápido em força bruta offline.
+  const PASSPHRASE_MIN = 10;
+  const passphraseOK = s => typeof s === 'string' && s.length >= PASSPHRASE_MIN;
+  async function protectPassphrase(value, passphrase, context) {
+    if (!passphraseOK(passphrase)) throw new Error('Use uma senha com pelo menos ' + PASSPHRASE_MIN + ' caracteres.');
+    return protectWithSecret(value, passphrase, context);
+  }
   async function unprotect(payload, pin, context) {
     if (!payload || payload.format !== 'financ-encrypted-v1' || payload.context !== context || payload.iterations !== ITERATIONS) throw new Error('Formato incompatível.');
     const salt = unb64(payload.salt);
@@ -48,7 +56,7 @@
   }
   // Preferências cifradas e autenticadas com a chave de dados (só existem com o cofre aberto); só valores da lista são aceitos.
   const AUTO_LOCK_MINUTES = [1, 5, 15, 30];
-  const DEFAULT_SETTINGS = Object.freeze({ autoLockMinutes: 15, lockOnHide: false });
+  const DEFAULT_SETTINGS = Object.freeze({ autoLockMinutes: 5, lockOnHide: false });
   function cleanSettings(raw) {
     const s = raw && typeof raw === 'object' ? raw : {};
     return {
@@ -94,6 +102,8 @@
         return master;
       } finally { raw.fill(0); }
     }
+    // 'pin' (6 números) ou 'password' (senha longa, opcional e mais forte contra força bruta offline).
+    get kind() { try { return this.read().secretKind === 'password' ? 'password' : 'pin'; } catch (_) { return 'pin'; } }
     withPin(pin) { return unprotect(this.read().password, pin, idContext('password')); }
     withRecovery(code) { return unprotect(this.read().recovery, code, idContext('recovery')); }
     async withBiometric(prfSecret) {
@@ -104,7 +114,10 @@
     get biometric() {
       try { const b = this.read().biometric; return b ? { credentialId: b.credentialId, prfSalt: b.prfSalt } : null; } catch (_) { return null; }
     }
-    async setPin(master, pin) { const password = await protect(master, pin, idContext('password')); this.write(r => { r.password = password; }); }
+    async setPin(master, secret, kind = 'pin') {
+      const password = kind === 'password' ? await protectPassphrase(master, secret, idContext('password')) : await protect(master, secret, idContext('password'));
+      this.write(r => { r.password = password; if (kind === 'password') r.secretKind = 'password'; else delete r.secretKind; });
+    }
     async setRecovery(master, code) { const rec = await protectWithSecret(master, code, idContext('recovery')); this.write(r => { r.recovery = rec; }); }
     async setBiometric(master, credentialId, prfSalt, prfSecret) {
       const salt = random(16);
@@ -133,6 +146,9 @@
       this.identity = new Identity(storage); this.masterKey = null; this.certs = null;
     }
     get exists() { return this.storage.getItem(this.storageKey) !== null; }
+    // Segredo de abertura: PIN de 6 números ou senha longa (só com o FINANC ID).
+    get secretKind() { return this.linked || (!this.exists && this.identity.exists) ? this.identity.kind : 'pin'; }
+    secretOK(secret) { return this.secretKind === 'password' ? passphraseOK(secret) : pinOK(secret); }
     // Cofre ligado ao FINANC ID: não tem PIN, código nem biometria próprios.
     get linked() {
       try { const { envelope } = this.envelope ? { envelope: this.envelope } : this.readEnvelope(); return Boolean(envelope.identity); } catch (_) { return false; }
@@ -143,8 +159,8 @@
     // Com FINANC ID: o PIN é o dele e não há código novo (devolve null).
     async create(pin, initial = {}, recovery = recoveryCode()) {
       if (this.exists) throw new Error('O cofre já existe.');
-      if (!pinOK(pin)) throw new Error('Use um PIN de 6 números.');
       const hadIdentity = this.identity.exists;
+      if (hadIdentity ? typeof pin !== 'string' || !pin : !pinOK(pin)) throw new Error('Use um PIN de 6 números.');
       const master = hadIdentity ? await this.identity.withPin(pin) : await this.identity.create(pin, recovery);
       const rawKey = random(32);
       try {
@@ -241,7 +257,7 @@
       await this.openWith(await open(b, key, this.context('biometric')), envelope, stored);
     }
     async masterFromPin(pin) {
-      if (!pinOK(pin)) throw new Error('Use um PIN de 6 números.');
+      if (typeof pin !== 'string' || !pin) throw new Error('Digite o PIN ou a senha.');
       return this.identity.withPin(pin);
     }
     async verifyPin(pin) {
@@ -274,11 +290,22 @@
     }
     async changePin(currentPin, newPin) {
       this.assertOpen();
+      if (this.linked) {
+        const kind = this.secretKind;
+        if (!this.secretOK(newPin)) throw new Error(kind === 'password' ? 'Use uma senha com pelo menos ' + PASSPHRASE_MIN + ' caracteres.' : 'Use um PIN de 6 números.');
+        await this.identity.setPin(await this.masterFromPin(currentPin), newPin, kind); return;
+      }
       if (!pinOK(newPin)) throw new Error('Use um PIN de 6 números.');
-      if (this.linked) { await this.identity.setPin(await this.masterFromPin(currentPin), newPin); return; }
       const raw = await unprotect(this.envelope.password, currentPin, this.context('password'));
       this.envelope.password = await protect(raw, newPin, this.context('password'));
       this.dirty = true; await this.flush();
+    }
+    // Troca PIN por senha longa (ou volta ao PIN). Vale para todos os apps ligados ao FINANC ID.
+    async changeSecretKind(current, next, kind) {
+      this.assertOpen();
+      if (!this.linked) throw new Error('Ligue este app ao PIN único para usar senha.');
+      if (kind !== 'pin' && kind !== 'password') throw new Error('Tipo inválido.');
+      await this.identity.setPin(await this.masterFromPin(current), next, kind);
     }
     async rotateRecovery(pin, recovery = recoveryCode()) {
       this.assertOpen();
@@ -307,7 +334,7 @@
         const key = await importAes(rawKey);
         const values = envelope.payload ? await open(envelope.payload, key, this.context('data')) : {};
         if (!values || typeof values !== 'object' || Array.isArray(values) || Object.values(values).some(v => typeof v !== 'string')) throw new Error('Dados inválidos.');
-        // Preferência adulterada ou ilegível volta ao padrão (15 min, sem bloqueio ao sair).
+        // Preferência adulterada ou ilegível volta ao padrão (5 min, sem bloqueio ao sair).
         let prefs = { ...DEFAULT_SETTINGS };
         if (envelope.settings) { try { prefs = cleanSettings(await open(envelope.settings, key, this.context('settings'))); } catch (_) {} }
         this.prefs = prefs;
@@ -445,7 +472,7 @@
       try { PublicKeyCredential.signalUnknownCredential({ rpId: location.hostname, credentialId: b64url(credentialId) }).catch(() => {}); } catch (_) {}
     },
   };
-  const api = { Vault, Identity, protect, unprotect, pinOK, recoveryCode, webauthn, AUTO_LOCK_MINUTES, certOK };
+  const api = { Vault, Identity, protect, protectPassphrase, passphraseOK, PASSPHRASE_MIN, unprotect, pinOK, recoveryCode, webauthn, AUTO_LOCK_MINUTES, certOK };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.FinancVault = api;
 })(globalThis);
