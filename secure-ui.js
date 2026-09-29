@@ -300,16 +300,7 @@
   function finish() {
     vault.cleanupLegacy(matches);
     root.classList.remove('vault-locked'); panel.remove();
-    const tools = document.createElement('div'); tools.id = 'vaultTools'; tools.setAttribute('role', 'group'); tools.setAttribute('aria-label', 'Segurança');
-    const settings = document.createElement('button'); settings.id = 'vaultSettingsBtn'; settings.type = 'button';
-    settings.title = 'Configurações'; settings.setAttribute('aria-label', 'Configurações');
-    settings.innerHTML = icon('settings', 17); settings.onclick = () => FinancSettings.open();
-    const lockButton = document.createElement('button'); lockButton.id = 'vaultLock'; lockButton.type = 'button';
-    lockButton.title = 'Bloquear aplicativo'; lockButton.setAttribute('aria-label', 'Bloquear aplicativo');
-    lockButton.innerHTML = icon('lock', 16) + '<span>Bloquear</span>';
-    lockButton.onclick = () => window.lockVault();
-    if (VERSION) { const ver = document.createElement('span'); ver.className = 'vault-tools-version'; ver.textContent = VERSION; ver.title = appName + ' ' + VERSION; tools.append(ver); }
-    tools.append(settings, lockButton); document.body.append(tools);
+    mountProfile();
     resolveReady(); lastActivity = Date.now(); saveSession();
   }
   function showRecoveryCode(recovery, pin, renewed = false) {
@@ -434,6 +425,82 @@
     dialog.onclose = () => { input.value = ''; confirm.value = ''; dialog.remove(); resolve(result); };
     form.append(head, input, confirm, actions); dialog.append(form); document.body.append(dialog); dialog.showModal(); input.focus();
   });
+  /* ───────── Menu de perfil: avatar no topo que abre um painel lateral ───────── */
+  function avatarMarkup(size) {
+    if (logoLink) return '<img src="' + esc(logoLink.getAttribute('href')) + '" alt="" width="' + size + '" height="' + size + '">';
+    const initials = appName.split(/[\s-]+/).filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase();
+    return '<span class="vp-initials">' + esc(initials || '?') + '</span>';
+  }
+  function mountProfile() {
+    const button = document.createElement('button'); button.id = 'vaultProfileBtn'; button.type = 'button';
+    button.setAttribute('aria-label', 'Abrir menu do perfil'); button.setAttribute('aria-haspopup', 'dialog'); button.setAttribute('aria-expanded', 'false'); button.title = 'Menu do perfil';
+    button.innerHTML = '<span class="vp-avatar">' + avatarMarkup(34) + '</span><span class="vp-dot" aria-hidden="true"></span>';
+    button.onclick = () => openProfile(button);
+    // O app pode reservar um lugar no próprio cabeçalho (data-vault-profile-slot); sem ele, o avatar flutua no canto.
+    const slot = document.querySelector('[data-vault-profile-slot]');
+    if (slot) { button.classList.add('vp-inline'); slot.append(button); } else document.body.append(button);
+  }
+  function themeRow() {
+    if (!themeSupported) return '';
+    let theme = 'system'; try { theme = nativeStorage.getItem(THEME_KEY) || 'system'; } catch (_) {}
+    return '<div class="vp-theme"><span class="vp-item-ic">' + icon('sun', 18) + '</span><div class="fs-seg" role="group" aria-label="Tema">'
+      + [['system', 'monitor', 'Sistema'], ['dark', 'moon', 'Escuro'], ['light', 'sun', 'Claro']].map(([v, ic, l]) => '<button type="button" data-vp="theme" data-v="' + v + '" aria-pressed="' + (theme === v) + '" title="' + l + '">' + icon(ic, 14) + '<span>' + l + '</span></button>').join('')
+      + '</div></div>';
+  }
+  function openProfile(trigger) {
+    if (!vault.key || document.getElementById('vaultProfile')) return;
+    const cfg = vault.settings, bioOn = Boolean(vault.biometric);
+    const drawer = document.createElement('dialog'); drawer.id = 'vaultProfile'; drawer.className = 'vp-drawer';
+    drawer.setAttribute('aria-labelledby', 'vpTitle');
+    const item = (id, ic, label, desc, cls = '') => '<button type="button" class="vp-item ' + cls + '" data-vp="' + id + '"><span class="vp-item-ic">' + icon(ic, 18) + '</span><span class="vp-item-text"><b>' + esc(label) + '</b>' + (desc ? '<span>' + esc(desc) + '</span>' : '') + '</span>' + (cls.includes('vp-lock') ? '' : icon('chevron-right', 16)) + '</button>';
+    let extra = '';
+    extraSections.forEach((sec, si) => {
+      extra += '<p class="vp-section">' + esc(sec.title) + '</p>' + sec.rows.map((r, ri) => item('x' + si + '-' + ri, r.icon || 'chevron-right', r.label, r.description || '', r.danger ? 'vp-danger' : '')).join('');
+    });
+    drawer.innerHTML = '<div class="vp-panel">'
+      + '<header class="vp-head"><button type="button" class="vp-close" data-vp="close" aria-label="Fechar menu">' + icon('x', 20) + '</button>'
+      + '<span class="vp-avatar vp-avatar-lg">' + avatarMarkup(56) + '</span>'
+      + '<h2 id="vpTitle"></h2><p class="vp-sub">' + icon('shield-check', 13) + 'Cofre local protegido</p></header>'
+      + '<div class="vp-stats">'
+      + '<div><span>' + icon('clock', 14) + 'Bloqueio automático</span><b>' + cfg.autoLockMinutes + ' min</b></div>'
+      + '<div><span>' + icon('fingerprint', 14) + 'Biometria</span><b>' + (bioOn ? 'Ativada' : 'Desativada') + '</b></div>'
+      + '</div>'
+      + '<nav class="vp-menu" aria-label="Menu do perfil">'
+      + '<p class="vp-section">Conta</p>'
+      + item('settings', 'settings', 'Configurações', 'PIN, biometria, bloqueio e tema')
+      + themeRow()
+      + extra
+      + '</nav>'
+      + '<footer class="vp-foot">' + item('lock', 'lock', 'Bloquear agora', 'Salva e pede o PIN para voltar', 'vp-lock')
+      + '<p class="vp-version"></p></footer></div>';
+    drawer.querySelector('#vpTitle').textContent = appName;
+    drawer.querySelector('.vp-version').textContent = appName + (VERSION ? ' ' + VERSION : '') + ' · Kit de segurança FINANC';
+    const close = () => { drawer.classList.add('vp-closing'); setTimeout(() => drawer.close(), reducedMotion() ? 0 : 180); };
+    drawer.addEventListener('cancel', event => { event.preventDefault(); close(); });
+    drawer.addEventListener('click', event => {
+      if (event.target === drawer) { close(); return; }
+      const target = event.target.closest('[data-vp]'); if (!target) return;
+      const action = target.dataset.vp;
+      if (action === 'close') close();
+      else if (action === 'theme') {
+        const value = target.dataset.v;
+        try { if (value === 'system') nativeStorage.removeItem(THEME_KEY); else nativeStorage.setItem(THEME_KEY, value); } catch (_) {}
+        applyTheme(value);
+        drawer.querySelectorAll('[data-vp=theme]').forEach(b => b.setAttribute('aria-pressed', String(b === target)));
+      }
+      else if (action === 'settings') { drawer.close(); FinancSettings.open(); }
+      else if (action === 'lock') { drawer.close(); window.lockVault(); }
+      else if (action[0] === 'x') {
+        const [si, ri] = action.slice(1).split('-').map(Number);
+        drawer.close(); extraSections[si].rows[ri].onClick();
+      }
+    });
+    drawer.onclose = () => { drawer.remove(); if (trigger) trigger.setAttribute('aria-expanded', 'false'); if (trigger && document.body.contains(trigger)) trigger.focus({ preventScroll: true }); };
+    document.body.append(drawer); drawer.showModal(); if (trigger) trigger.setAttribute('aria-expanded', 'true');
+    drawer.querySelector('.vp-close').focus();
+  }
+  const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+
   /* ───────── Configurações (aba ou tela cheia) ───────── */
   const extraSections = [];
   let pinFailures = 0, pinBlockedUntil = 0;
