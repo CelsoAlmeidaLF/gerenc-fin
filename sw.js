@@ -1,4 +1,4 @@
-const CACHE_NAME = 'livro-caixa-v7-pin-autofill';
+const CACHE_NAME = 'livro-caixa-v8-bio-passkey';
 const APP_SHELL = [
   './index.html',
   './app.js',
