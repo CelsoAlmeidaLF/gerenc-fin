@@ -10,7 +10,7 @@
   const appName = root.dataset.vaultName || document.title.split(/\s[—–-]\s/)[0].trim();
   const VERSION = root.dataset.vaultVersion ? 'v' + root.dataset.vaultVersion : '';
   const logoLink = document.querySelector('link[rel="apple-touch-icon"], link[rel="icon"]');
-  const PIN_STEPS = new Set(['unlock', 'create', 'create-confirm', 'recover-pin', 'recover-confirm']);
+  const PIN_STEPS = new Set(['unlock', 'join', 'create', 'create-confirm', 'recover-pin', 'recover-confirm']);
   const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'bio', '0', 'del'];
   const bio = FinancVault.webauthn;
   const DECLINED = 'financ-vault-bio-declined:' + appId, MANUAL_LOCK = 'financ-vault-manual-lock:' + appId;
@@ -169,9 +169,10 @@
   const pinInput = get('vaultPin');
   const COPY = {
     'unlock': ['Dados protegidos', 'Digite seu PIN de 6 números para abrir o aplicativo.', 'Desbloquear', 'lock'],
-    'create': ['Crie seu PIN', 'Escolha 6 números. Os dados deste aplicativo serão criptografados neste navegador.', 'Continuar', 'shield'],
+    'join': ['Use seu PIN FINANC', 'Você já tem um PIN FINANC neste aparelho. Digite-o para abrir o ' + appName + '.', 'Entrar', 'shield'],
+    'create': ['Crie seu PIN FINANC', 'Escolha 6 números. O mesmo PIN vai abrir todos os apps FINANC deste aparelho.', 'Continuar', 'shield'],
     'create-confirm': ['Confirme o PIN', 'Digite o mesmo PIN mais uma vez.', 'Criar PIN', 'shield'],
-    'recover-code': ['Recuperar acesso', 'Informe o código de recuperação que você guardou ao criar o PIN.', 'Continuar', 'key'],
+    'recover-code': ['Recuperar acesso', 'Informe o código de recuperação que você guardou (o FINANC ou o antigo deste app).', 'Continuar', 'key'],
     'recover-pin': ['Novo PIN', 'Escolha um novo PIN de 6 números.', 'Continuar', 'key'],
     'recover-confirm': ['Confirme o novo PIN', 'Digite o novo PIN mais uma vez.', 'Definir novo PIN', 'key'],
   };
@@ -204,8 +205,8 @@
     const pinStep = PIN_STEPS.has(step);
     get('vaultPinWrap').hidden = !pinStep; get('vaultKeypad').hidden = !pinStep;
     get('vaultRecoveryLabel').hidden = step !== 'recover-code';
-    get('vaultRecover').hidden = step !== 'unlock';
-    get('vaultBack').hidden = step === 'unlock' || step === 'create';
+    get('vaultRecover').hidden = step !== 'unlock' && step !== 'join';
+    get('vaultBack').hidden = step === 'unlock' || step === 'join' || step === 'create';
     pinInput.value = ''; get('vaultDots').classList.remove('vault-shake'); renderDots(); refreshBiometric();
     if (!blocked) (pinStep ? pinInput : get('vaultRecovery')).focus({ preventScroll: true });
   }
@@ -230,14 +231,16 @@
   get('vaultRecover').onclick = () => { get('vaultMessage').textContent = ''; go('recover-code'); };
   get('vaultBack').onclick = () => {
     get('vaultMessage').textContent = '';
-    go({ 'create-confirm': 'create', 'recover-code': 'unlock', 'recover-pin': 'recover-code', 'recover-confirm': 'recover-pin' }[step]);
+    go({ 'create-confirm': 'create', 'recover-code': firstStep(), 'recover-pin': 'recover-code', 'recover-confirm': 'recover-pin' }[step]);
   };
   function fail(message) {
     get('vaultMessage').textContent = message;
     const dots = get('vaultDots'); dots.classList.remove('vault-shake'); void dots.offsetWidth; dots.classList.add('vault-shake');
     pinInput.value = ''; renderDots();
   }
-  go(vault.exists ? 'unlock' : 'create');
+  // Sem cofre deste app: com FINANC ID no aparelho, só pede o PIN dele; sem, cria o PIN FINANC.
+  const firstStep = () => vault.exists ? 'unlock' : vault.identity.exists ? 'join' : 'create';
+  go(firstStep());
 
   async function unlockWithBiometric(auto) {
     const info = vault.biometric;
@@ -271,7 +274,8 @@
   function declined() { try { return nativeStorage.getItem(DECLINED) === '1'; } catch (_) { return true; } }
   async function enrollBiometric(pin) {
     await vault.verifyPin(pin);
-    const enrolled = await bio.enroll(appName, appId);
+    // Ligado ao FINANC ID, a biometria vale para todos os apps: a credencial leva o nome FINANC.
+    const enrolled = vault.linked ? await bio.enroll('FINANC', 'financ') : await bio.enroll(appName, appId);
     try { await vault.enableBiometric(pin, enrolled.credentialId, enrolled.prfSalt, enrolled.secret); }
     finally { enrolled.secret.fill(0); }
     try { nativeStorage.removeItem(DECLINED); } catch (_) {}
@@ -285,7 +289,7 @@
     panel.replaceChildren();
     const badge = document.createElement('div'); badge.className = 'vault-badge'; badge.innerHTML = icon('fingerprint', 24);
     const title = document.createElement('h1'); title.id = 'vaultTitle'; title.textContent = 'Desbloquear com biometria?';
-    const help = document.createElement('p'); help.textContent = 'Use a digital, o rosto ou o bloqueio de tela deste aparelho para abrir o app. O PIN continua funcionando.';
+    const help = document.createElement('p'); help.textContent = 'Use a digital, o rosto ou o bloqueio de tela deste aparelho para abrir ' + (vault.linked ? 'os apps FINANC' : 'o app') + '. O PIN continua funcionando.';
     const enable = document.createElement('button'); enable.type = 'button'; enable.className = 'vault-primary';
     enable.innerHTML = icon('fingerprint', 18) + '<span>Ativar biometria</span>';
     const skip = document.createElement('button'); skip.type = 'button'; skip.className = 'vault-secondary'; skip.textContent = 'Agora não';
@@ -304,15 +308,21 @@
     vault.cleanupLegacy(matches);
     root.classList.remove('vault-locked'); panel.remove();
     mountProfile();
-    resolveReady(); lastActivity = Date.now(); saveSession();
+    lastActivity = Date.now(); saveSession();
+    // O app só começa depois de o certificado antigo dele passar para o certificado FINANC.
+    adoptCertificate().catch(() => {}).then(resolveReady);
   }
-  function showRecoveryCode(recovery, pin, renewed = false) {
+  // kind: 'new' (PIN FINANC criado), 'renewed' (código usado foi trocado) ou 'migrated' (primeiro app ligado ao FINANC ID).
+  function showRecoveryCode(recovery, pin, kind = 'new') {
     // Show once and require acknowledgement before entering the application.
     panel.replaceChildren();
     panel.classList.add('vault-recovery');
     const badge = document.createElement('div'); badge.className = 'vault-badge'; badge.innerHTML = icon('key', 22);
-    const title = document.createElement('h1'); title.id = 'vaultTitle'; title.textContent = renewed ? 'Seu novo código de recuperação' : 'Guarde seu código de recuperação';
-    const help = document.createElement('p'); help.textContent = (renewed ? 'O código usado deixou de valer. ' : '') + 'Este código permite redefinir o PIN. Guarde-o offline, separado dos backups. Ele não será exibido novamente.';
+    const title = document.createElement('h1'); title.id = 'vaultTitle'; title.textContent = kind === 'renewed' ? 'Seu novo código de recuperação' : kind === 'migrated' ? 'Agora é um PIN só' : 'Guarde seu código de recuperação';
+    const help = document.createElement('p');
+    help.textContent = (kind === 'migrated' ? 'Este PIN passa a abrir todos os apps FINANC deste aparelho. O código antigo deste app deixou de valer; use este no lugar. '
+      : kind === 'renewed' ? 'O código usado deixou de valer. ' : '')
+      + 'Este código redefine o PIN FINANC de todos os apps. Guarde-o offline, separado dos backups. Ele não será exibido novamente.';
     const code = document.createElement('p'); code.id = 'vaultRecoveryCode'; code.textContent = recovery;
     const copy = document.createElement('button'); copy.type = 'button'; copy.className = 'vault-secondary';
     copy.innerHTML = icon('copy', 16) + '<span>Copiar código</span>';
@@ -344,16 +354,28 @@
     try {
       await legacyCleanup; await sessionReady;
       if (!crypto.subtle) throw new Error('Abra o aplicativo em HTTPS ou localhost para proteger os dados.');
-      if (!vault.exists) {
-        const initial = Object.create(null);
-        for (let i = 0; i < nativeStorage.length; i++) { const key = nativeStorage.key(i); if (matches(key)) initial[key] = nativeStorage.getItem(key); }
-        showRecoveryCode(await vault.create(pin, initial), pin);
+      const initial = Object.create(null);
+      if (!vault.exists) for (let i = 0; i < nativeStorage.length; i++) { const key = nativeStorage.key(i); if (matches(key)) initial[key] = nativeStorage.getItem(key); }
+      if (step === 'recover-confirm') {
+        const status = await vault.resetPassword(recoveryInput, pin, undefined, initial);
+        done(); await afterUnlock(status, pin, 'renewed');
+      } else if (!vault.exists) {
+        const recovery = await vault.create(pin, initial);
+        done(); if (recovery) showRecoveryCode(recovery, pin); else offerBiometric(pin);
       } else {
-        const renewed = step === 'recover-confirm' ? await vault.resetPassword(recoveryInput, pin) : null;
-        if (!renewed) await vault.unlock(pin);
-        failedAttempts = 0; firstPin = ''; recoveryInput = '';
-        get('vaultForm').reset();
-        if (renewed) showRecoveryCode(renewed, pin, true); else offerBiometric(pin);
+        let status;
+        try { status = await vault.unlock(pin); }
+        catch (error) {
+          if (error.code !== 'LEGACY_PIN') throw error;
+          // PIN FINANC certo, mas este app ainda tem o PIN antigo dele: pede uma única vez.
+          setBusy(false);
+          const oldPin = await window.askSecret('Digite o PIN antigo do ' + appName + ' (só desta vez) para passar a usar o PIN FINANC:');
+          if (!oldPin) { fail('Sem o PIN antigo, este app continua bloqueado.'); return; }
+          setBusy(true);
+          await vault.unlockLegacy(oldPin, pin);
+          status = {};
+        }
+        done(); await afterUnlock(status, pin, 'migrated');
       }
     } catch (error) {
       failedAttempts += 1;
@@ -373,6 +395,22 @@
       } else setBusy(false);
     }
   };
+  function done() { failedAttempts = 0; firstPin = ''; recoveryInput = ''; get('vaultForm').reset(); }
+  // Depois de abrir: mostra o código FINANC novo, ou liga o app ao PIN FINANC quando os PINs eram diferentes.
+  async function afterUnlock(status, pin, kind) {
+    if (status.needsIdentityPin) pin = (await askIdentityPin()) || pin;
+    if (status.recovery) showRecoveryCode(status.recovery, pin, kind); else offerBiometric(pin);
+  }
+  async function askIdentityPin() {
+    let label = 'Os outros apps FINANC usam outro PIN. Digite esse PIN para usar um só em todos (Cancelar mantém o PIN deste app):';
+    for (let tries = 0; tries < 5; tries++) {
+      const pin = await window.askSecret(label);
+      if (!pin) return null;
+      try { await vault.linkWithIdentityPin(pin); return pin; }
+      catch (error) { if (error.name !== 'OperationError') throw error; label = 'PIN FINANC incorreto. Tente de novo:'; }
+    }
+    return null;
+  }
   window.lockVault = async () => {
     if (locking) return;
     locking = true; root.classList.add('vault-locked'); session.set(MANUAL_LOCK); dropSession();
@@ -557,17 +595,18 @@
     const cfg = vault.settings, bioOn = Boolean(vault.biometric);
     const size = (() => { try { return (nativeStorage.getItem(vault.storageKey) || '').length; } catch (_) { return 0; } })();
     let html = group('Segurança',
-      actionRow('pin', 'key', 'Alterar PIN', 'Pede o PIN atual e o novo PIN.')
+      (vault.linked ? '' : actionRow('link', 'link', 'Usar o PIN FINANC', 'Um só PIN, código e biometria para todos os apps.'))
+      + actionRow('pin', 'key', vault.linked ? 'Alterar PIN FINANC' : 'Alterar PIN', vault.linked ? 'Vale para todos os apps FINANC deste aparelho.' : 'Pede o PIN atual e o novo PIN.')
       + row('fingerprint', 'Biometria', bioOn ? 'Ativada: digital, rosto ou bloqueio de tela.' : bioAvailable ? 'Desativada.' : 'Indisponível neste aparelho ou navegador.', toggle('bio', bioOn, !bioOn && !bioAvailable))
       + row('clock', 'Bloqueio automático', 'Sem uso por este tempo, o app bloqueia.', '<select class="fs-select" data-fs="autolock" aria-label="Bloqueio automático">' + FinancVault.AUTO_LOCK_MINUTES.map(m => '<option value="' + m + '"' + (m === cfg.autoLockMinutes ? ' selected' : '') + '>' + m + ' min</option>').join('') + '</select>')
       + row('eye-off', 'Bloquear ao sair do app', 'Bloqueia ao trocar de aba, minimizar ou apagar a tela.', toggle('hide', cfg.lockOnHide))
-      + actionRow('recovery', 'shield-check', 'Novo código de recuperação', 'Gera outro código e invalida o anterior.')
+      + actionRow('recovery', 'shield-check', 'Novo código de recuperação', vault.linked ? 'Gera outro código FINANC e invalida o anterior.' : 'Gera outro código e invalida o anterior.')
       + actionRow('lock', 'lock', 'Bloquear agora', '', 'fs-accent'));
     if (installPrompt) html += group('App', actionRow('install', 'download', 'Instalar app', 'Coloca o ' + appName + ' na tela inicial, como um app.'));
     extraSections.forEach((sec, si) => { html += group(sec.title, sec.rows.map((r, ri) => actionRow('x' + si + '-' + ri, r.icon || 'chevron-right', r.label, r.description || '', r.danger ? 'fs-danger' : '')).join('')); });
     html += group('Sobre', row('database', 'Armazenamento', 'Cofre local criptografado (AES-256-GCM) · ' + Math.max(1, Math.round(size / 1024)) + ' KB neste navegador.')
-      + row('info', appName + (VERSION ? ' ' + VERSION : ''), 'Kit de segurança FINANC 1.3 · PIN, biometria e bloqueio automático.'));
-    html += group('Zona de perigo', actionRow('destroy', 'trash', 'Apagar todos os dados deste app', 'Remove o cofre deste navegador. Não pode ser desfeito.', 'fs-danger'));
+      + row('info', appName + (VERSION ? ' ' + VERSION : ''), 'Kit de segurança FINANC 2.0 · PIN FINANC, biometria e bloqueio automático.'));
+    html += group('Zona de perigo', actionRow('destroy', 'trash', 'Apagar todos os dados deste app', 'Remove o cofre deste app. O PIN FINANC continua nos outros apps. Não pode ser desfeito.', 'fs-danger'));
     container.innerHTML = '<div class="fs">' + html + '<p class="fs-toast" role="status" aria-live="polite"></p></div>';
     container.onclick = event => handle(event, container);
     container.onchange = event => handle(event, container);
@@ -597,7 +636,7 @@
           const { credentialId } = vault.biometric;
           await vault.disableBiometric(); bio.forget(credentialId);
           try { nativeStorage.setItem(DECLINED, '1'); } catch (_) {}
-          say('Biometria desativada. Use o PIN para abrir.');
+          say(vault.linked ? 'Biometria desativada em todos os apps FINANC. Use o PIN.' : 'Biometria desativada. Use o PIN para abrir.');
         } else if (await withPin('Digite seu PIN para ativar a biometria:', pin => enrollBiometric(pin))) say('Biometria ativada.');
       } else if (kind === 'autolock') {
         const minutes = Number(el.value);
@@ -611,12 +650,15 @@
         if (typeof code === 'string') { await showCodeDialog(code); say('Novo código de recuperação ativo.'); }
       } else if (kind === 'lock') {
         window.lockVault(); return;
+      } else if (kind === 'link') {
+        const pin = await window.askSecret('Digite o PIN FINANC (o dos outros apps):');
+        if (pin) { await vault.linkWithIdentityPin(pin); await adoptCertificate(); say('Pronto: este app agora usa o PIN FINANC.'); }
       } else if (kind === 'install') {
         const prompt = installPrompt; installPrompt = null;
         if (prompt) { prompt.prompt(); const { outcome } = await prompt.userChoice; say(outcome === 'accepted' ? 'App instalado.' : 'Instalação cancelada.'); }
       } else if (kind === 'destroy') {
         if (!await confirmDanger('Apagar todos os dados?', 'O cofre deste app será removido deste navegador, incluindo PIN, biometria e todos os registros. Faça um backup antes, se precisar.', 'Apagar tudo')) { el.disabled = false; return; }
-        const credential = vault.biometric;
+        const credential = vault.linked ? null : vault.biometric; // a biometria FINANC continua valendo nos outros apps
         const done = await withPin('Digite seu PIN para apagar tudo:', pin => vault.destroy(pin));
         if (done) {
           if (credential) bio.forget(credential.credentialId);
@@ -660,15 +702,47 @@
     const url = URL.createObjectURL(new Blob([JSON.stringify(payload)], { type: 'application/json' }));
     const a = document.createElement('a'); a.href = url; a.download = filename; a.click(); URL.revokeObjectURL(url);
   };
+  // Aceita o certificado FINANC e os exportados pelos apps antes dele (cripito-sim, gerenc-fin).
+  const CERT_CONTEXT = /^(financ|[a-z-]+):certificate$/;
   window.importCertificate = async (payload, context) => {
     if (payload && payload.format === 'financ-encrypted-v1') {
+      if (!CERT_CONTEXT.test(payload.context || '') && payload.context !== context) throw new Error('Certificado inválido.');
       const pin = await window.askSecret('PIN do certificado:');
       if (!pin) throw new Error('Importação cancelada.');
-      payload = await FinancVault.unprotect(payload, pin, context);
+      payload = await FinancVault.unprotect(payload, pin, payload.context);
     } else if (!confirm('Este certificado antigo está sem criptografia. Importar e protegê-lo no cofre? Depois exporte uma cópia protegida.')) throw new Error('Importação cancelada.');
     if (!payload || typeof payload.id !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(payload.id) || typeof payload.secret !== 'string' || atob(payload.secret).length !== 32) throw new Error('Certificado inválido.');
     return payload;
   };
+  // Certificado FINANC: um só para todos os apps, guardado cifrado no FINANC ID. O primeiro da lista é o atual;
+  // os anteriores continuam guardados para abrir backups antigos.
+  const CERT_KEYS = { 'cripito-sim': 'cripto-app-device-cert', 'gerenc-fin': 'livro_caixa_device_cert_v1' };
+  const randomB64 = size => btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(size))));
+  const newCert = () => ({ version: 1, id: 'cert-' + randomB64(12).replace(/[^a-zA-Z0-9]/g, '').slice(0, 16), secret: randomB64(32), createdAt: new Date().toISOString() });
+  window.FinancCert = {
+    get linked() { return Boolean(vault.key && vault.linked); },
+    get current() { return vault.certificates[0] || null; },
+    find(id) { return vault.certificates.find(c => c.id === id) || null; },
+    async add(cert, makeCurrent = true) {
+      if (!FinancVault.certOK(cert)) throw new Error('Certificado inválido.');
+      const others = vault.certificates.filter(c => c.id !== cert.id);
+      await vault.saveCertificates(makeCurrent ? [cert, ...others] : [...others, cert]);
+    },
+    async ensure() { if (!this.current) await vault.saveCertificates([newCert()]); return this.current; },
+    async regenerate() { const cert = newCert(); await this.add(cert); return cert; },
+    async export() { const cert = await this.ensure(); await window.exportProtected(cert, 'financ:certificate', 'financ-' + cert.id + '.cert.secure.json'); },
+    async importFile(payload) { const cert = await window.importCertificate(payload, 'financ:certificate'); await this.add(cert); return cert; },
+  };
+  // Certificado próprio de versões antigas do app: entra no FINANC (vira o atual só se ainda não houver um) e sai do cofre do app.
+  async function adoptCertificate() {
+    if (!vault.linked) return;
+    const key = CERT_KEYS[appId], raw = key && vault.getItem(key);
+    if (raw) {
+      const own = JSON.parse(raw);
+      if (FinancVault.certOK(own)) await window.FinancCert.add(own, !window.FinancCert.current);
+      vault.removeItem(key); await vault.flush();
+    }
+  }
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
     // Versão nova do app: recarrega para usar os arquivos novos, mas só na tela de PIN parada.
