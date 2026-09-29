@@ -170,7 +170,7 @@
   const COPY = {
     'unlock': ['Dados protegidos', 'Digite seu PIN de 6 números para abrir o aplicativo.', 'Desbloquear', 'lock'],
     'join': ['Use seu PIN FINANC', 'Você já tem um PIN FINANC neste aparelho. Digite-o para abrir o ' + appName + '.', 'Entrar', 'shield'],
-    'create': ['Crie seu PIN FINANC', 'Escolha 6 números. O mesmo PIN vai abrir todos os apps FINANC deste aparelho.', 'Continuar', 'shield'],
+    'create': ['Crie seu PIN', 'Escolha 6 números. O mesmo PIN vai abrir todos os apps FINANC deste aparelho.', 'Continuar', 'shield'],
     'create-confirm': ['Confirme o PIN', 'Digite o mesmo PIN mais uma vez.', 'Criar PIN', 'shield'],
     'recover-code': ['Recuperar acesso', 'Informe o código de recuperação que você guardou (o FINANC ou o antigo deste app).', 'Continuar', 'key'],
     'recover-pin': ['Novo PIN', 'Escolha um novo PIN de 6 números.', 'Continuar', 'key'],
