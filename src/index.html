@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="vault-locked" data-vault-app="gerenc-fin" data-vault-name="Livro-Caixa" data-vault-themes="system dark light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; worker-src 'self'">
+<title>Livro-Caixa</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#171D1A">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Livro-Caixa">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0E1210; --surface: #171D1A; --surface-2: #202824; --line: #2C3733;
+    --ink: #EAF0EC; --ink-dim: #8FA098; --accent: #6FCF97; --accent-dim: #4A8A67;
+    --up: #6FCF97; --down: #E08585; --warn: #E0C185;
+    --green: #6FCF97; --green-bg: rgba(111,207,151,0.15);
+    --rust: #E08585; --rust-bg: rgba(224,133,133,0.15);
+    --gold: #E0C185; --gold-bg: rgba(224,193,133,0.15);
+    --radius: 10px;
+    box-sizing: border-box;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  html { scroll-padding-top: env(safe-area-inset-top, 0px); height: 100%; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'Space Grotesk', sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .num { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+  .wrap {
+    max-width: 780px;
+    margin: 0 auto;
+    padding: 28px 18px 60px;
+  }
+  header.top {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 14px;
+    margin-bottom: 22px;
+  }
+  header.top h1 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin: 0;
+    letter-spacing: 0.01em;
+  }
+  header.top .data-hoje {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.78rem;
+    color: var(--ink-dim);
+  }
+
+  .ledger-summary {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+    margin-bottom: 26px;
+  }
+  @media (min-width: 560px) { .ledger-summary { grid-template-columns: repeat(4, 1fr); } }
+  .ledger-summary .cell {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 14px 16px;
+  }
+  .ledger-summary .cell .label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.66rem;
+    color: var(--ink-dim);
+    letter-spacing: 0.03em;
+    margin-bottom: 4px;
+  }
+  .ledger-summary .cell .value {
+    font-size: 1.1rem;
+    font-weight: 600;
+  }
+  .ledger-summary .cell.pos .value { color: var(--green); }
+  .ledger-summary .cell.neg .value { color: var(--rust); }
+  .ledger-summary .cell.saldo .value { color: var(--ink); }
+
+  nav.tabs {
+    display: flex;
+    gap: 0;
+    overflow-x: auto;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 4px;
+    margin-bottom: 20px;
+    -webkit-overflow-scrolling: touch;
+  }
+  nav.tabs button {
+    appearance: none;
+    background: none;
+    border: none;
+    border-radius: 999px;
+    flex: 1;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.82rem;
+    color: var(--ink-dim);
+    padding: 10px 12px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  nav.tabs button.active {
+    background: var(--surface-2);
+    color: var(--accent);
+    font-weight: 600;
+  }
+  nav.tabs button:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  section.panel { display: none; }
+  section.panel.active { display: block; animation: fade .18s ease; }
+  @media (prefers-reduced-motion: reduce) { section.panel.active { animation: none; } }
+  @keyframes fade { from { opacity: 0; transform: translateY(3px);} to { opacity: 1; transform: translateY(0);} }
+
+  .section-title {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.03em;
+    color: var(--ink-dim);
+    margin: 26px 0 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .section-title::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--line);
+  }
+
+  form.entry {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 16px;
+    border-radius: 16px;
+  }
+  @media (min-width: 480px) {
+    form.entry.f-expense, form.entry.f-income { grid-template-columns: 100px 1fr 130px auto; align-items: end; }
+    form.entry.f-card { grid-template-columns: 100px 1fr 130px auto; align-items: end; }
+    form.entry.f-debt { grid-template-columns: 100px 1fr 90px 130px auto; align-items: end; }
+    form.entry.f-config { grid-template-columns: 1fr 1fr auto; align-items: end; }
+  }
+  form.entry label {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.68rem;
+    color: var(--ink-dim);
+  }
+  form.entry input, form.entry select {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.88rem;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 9px 10px;
+    color: var(--ink);
+    width: 100%;
+  }
+  form.entry input[type="text"] { font-family: 'Space Grotesk', sans-serif; }
+  form.entry button.add {
+    font-family: 'IBM Plex Mono', monospace;
+    font-weight: 600;
+    font-size: 0.8rem;
+    background: var(--accent);
+    color: var(--bg);
+    border: none;
+    border-radius: 999px;
+    padding: 10px 16px;
+    cursor: pointer;
+    height: fit-content;
+  }
+  form.entry button.add:hover { opacity: 0.88; }
+
+  .list { margin-top: 14px; }
+  .row {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    gap: 10px;
+    align-items: center;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .row:last-child { border-bottom: none; }
+  .row .desc { min-width: 0; }
+  .row .desc .t { font-size: 0.94rem; }
+  .row .desc .meta { font-family: 'IBM Plex Mono', monospace; font-size: 0.7rem; color: var(--ink-dim); margin-top: 2px; }
+  .row .amt { font-family: 'IBM Plex Mono', monospace; font-size: 0.95rem; white-space: nowrap; text-align: right; }
+  .row .amt.pos { color: var(--green); }
+  .row .amt.neg { color: var(--rust); }
+  .row .actions { display: flex; gap: 6px; }
+  .row .actions button {
+    appearance: none;
+    border: 1px solid var(--line);
+    background: var(--surface-2);
+    color: var(--ink-dim);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.68rem;
+    padding: 6px 9px;
+    border-radius: 999px;
+    cursor: pointer;
+  }
+  .row .actions button:hover { color: var(--ink); border-color: var(--ink-dim); }
+  .row .actions button.pay { color: var(--green); }
+  .row .actions button.del { color: var(--rust); }
+  .row.paid .desc .t { color: var(--ink-dim); text-decoration: line-through; text-decoration-color: var(--line); }
+  .row.paid .amt { color: var(--ink-dim) !important; }
+  .tag {
+    display: inline-block;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.6rem;
+    letter-spacing: 0.02em;
+    padding: 2px 7px;
+    border-radius: 999px;
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+  .tag.overdue { background: var(--rust-bg); color: var(--rust); }
+  .tag.paid { background: var(--green-bg); color: var(--green); }
+  .tag.due-soon { background: var(--gold-bg); color: var(--gold); }
+
+  .empty {
+    padding: 22px 4px;
+    color: var(--ink-dim);
+    font-size: 0.88rem;
+    font-family: 'IBM Plex Mono', monospace;
+  }
+
+  .card-limit-bar {
+    margin-top: 10px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 14px 16px;
+  }
+  .card-limit-bar .top-line {
+    display: flex;
+    justify-content: space-between;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.72rem;
+    color: var(--ink-dim);
+    margin-bottom: 8px;
+  }
+  .card-limit-bar .track {
+    height: 8px;
+    background: var(--surface-2);
+    border-radius: 999px;
+    overflow: hidden;
+  }
+  .card-limit-bar .fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 999px;
+    transition: width .25s ease;
+  }
+  .card-limit-bar.warn .fill { background: var(--gold); }
+  .card-limit-bar.danger .fill { background: var(--rust); }
+
+  .config-row {
+    display: flex;
+    gap: 16px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.78rem;
+    color: var(--ink-dim);
+    margin-top: 8px;
+    flex-wrap: wrap;
+  }
+  .config-row b { color: var(--ink); font-family: 'IBM Plex Mono', monospace; }
+
+  .close-cycle-btn {
+    margin-top: 12px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.76rem;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    color: var(--ink);
+    padding: 10px 14px;
+    border-radius: 999px;
+    cursor: pointer;
+  }
+  .close-cycle-btn:hover { border-color: var(--accent-dim); }
+
+  footer.util {
+    margin-top: 40px;
+    padding-top: 16px;
+    border-top: 1px solid var(--line);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  footer.util .status {
+    font-size: 0.68rem;
+    color: var(--ink-dim);
+    font-family: 'IBM Plex Mono', monospace;
+  }
+  footer.util .buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+  footer.util button, .close-cycle-btn, #securityGate button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+  footer.util button {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.7rem;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    color: var(--ink-dim);
+    padding: 8px 12px;
+    border-radius: 999px;
+    cursor: pointer;
+  }
+  footer.util button:hover { color: var(--ink); border-color: var(--accent-dim); }
+  #importFile { display: none; }
+  body.locked .wrap { visibility: hidden; }
+  #securityGate { display:none; max-width:520px; margin:18vh auto; padding:24px; background:var(--surface); border:1px solid var(--line); border-radius:16px; }
+  body.locked #securityGate { display:block; }
+  #securityGate p { color:var(--ink-dim); line-height:1.45; }
+  #securityGate input { display:none; }
+
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #F7FAF8; --surface: #FFFFFF; --surface-2: #EFF4F0; --line: #DCE6E0;
+      --ink: #16211B; --ink-dim: #667F72; --accent: #2E8B57; --accent-dim: #4EA976;
+      --green: #2E8B57; --green-bg: rgba(46,139,87,0.12);
+      --rust: #C1584A; --rust-bg: rgba(193,88,74,0.12);
+      --gold: #9A7B2E; --gold-bg: rgba(154,123,46,0.12);
+    }
+  }
+  /* Tema escolhido em Ajustes */
+  :root[data-theme="light"] {
+    --bg: #F7FAF8; --surface: #FFFFFF; --surface-2: #EFF4F0; --line: #DCE6E0;
+    --ink: #16211B; --ink-dim: #667F72; --accent: #2E8B57; --accent-dim: #4EA976;
+    --green: #2E8B57; --green-bg: rgba(46,139,87,0.12);
+    --rust: #C1584A; --rust-bg: rgba(193,88,74,0.12);
+    --gold: #9A7B2E; --gold-bg: rgba(154,123,46,0.12);
+  }
+  nav.tabs button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; white-space: nowrap; }
+</style>
+<link rel="stylesheet" href="secure-ui.css">
+</head>
+<body class="locked">
+<div id="securityGate"><h2>Dados protegidos</h2><p>Conclua a migração dos dados antigos. Se necessário, importe o certificado anterior e recarregue esta página.</p><button id="gateImportCert"><i data-icon="shield-check" data-size="14"></i> Importar certificado digital</button> <button id="gateRecover"><i data-icon="key" data-size="14"></i> Recuperar acesso</button><input id="gateCertFile" type="file" accept="application/json"><div id="gateStatus"></div></div>
+<div class="wrap">
+
+  <header class="top">
+    <h1>Livro-Caixa</h1>
+    <div class="data-hoje" id="dataHoje"></div>
+  </header>
+
+  <div class="ledger-summary">
+    <div class="cell pos"><div class="label">entradas do mês</div><div class="value num" id="sumEntradas">R$ 0,00</div></div>
+    <div class="cell neg"><div class="label">despesas do mês</div><div class="value num" id="sumDespesas">R$ 0,00</div></div>
+    <div class="cell saldo"><div class="label">saldo do mês</div><div class="value num" id="sumSaldo">R$ 0,00</div></div>
+    <div class="cell"><div class="label">limite livre no cartão</div><div class="value num" id="sumCartao">R$ 0,00</div></div>
+  </div>
+
+  <nav class="tabs">
+    <button data-tab="despesas" class="active">Despesas</button>
+    <button data-tab="entradas">Entradas</button>
+    <button data-tab="cartao">Cartão</button>
+    <button data-tab="dividas">Dívidas</button>
+    <button data-tab="ajustes" aria-label="Ajustes"><i data-icon="settings" data-size="15"></i> Ajustes</button>
+  </nav>
+
+  <!-- DESPESAS -->
+  <section class="panel active" id="panel-despesas">
+    <form class="entry f-expense" id="formDespesa">
+      <label>Valor (R$)<input type="number" step="0.01" min="0" id="dValor" required></label>
+      <label>Descrição<input type="text" id="dDesc" required placeholder="ex: aluguel"></label>
+      <label>Vencimento<input type="date" id="dVenc" required></label>
+      <button type="submit" class="add">Lançar</button>
+    </form>
+    <div class="section-title">em aberto</div>
+    <div class="list" id="listDespesasAbertas"></div>
+    <div class="section-title">pagas</div>
+    <div class="list" id="listDespesasPagas"></div>
+  </section>
+
+  <!-- ENTRADAS -->
+  <section class="panel" id="panel-entradas">
+    <form class="entry f-income" id="formEntrada">
+      <label>Valor (R$)<input type="number" step="0.01" min="0" id="eValor" required></label>
+      <label>Descrição<input type="text" id="eDesc" required placeholder="ex: salário"></label>
+      <label>Data<input type="date" id="eData" required></label>
+      <button type="submit" class="add">Lançar</button>
+    </form>
+    <div class="section-title">recebidas</div>
+    <div class="list" id="listEntradas"></div>
+  </section>
+
+  <!-- CARTAO -->
+  <section class="panel" id="panel-cartao">
+    <form class="entry f-config" id="formConfigCartao">
+      <label>Limite total (R$)<input type="number" step="0.01" min="0" id="cLimite"></label>
+      <label>Dia de fechamento<input type="number" min="1" max="31" id="cFechamento"></label>
+      <button type="submit" class="add">Salvar</button>
+    </form>
+
+    <div class="card-limit-bar" id="limiteBar">
+      <div class="top-line"><span>usado <b class="num" id="cartaoUsadoLabel">R$ 0,00</b></span><span>limite <b class="num" id="cartaoLimiteLabel">R$ 0,00</b></span></div>
+      <div class="track"><div class="fill" id="cartaoFill" style="width:0%"></div></div>
+      <div class="config-row" id="cartaoConfigInfo"></div>
+    </div>
+
+    <div class="section-title">lançamentos do ciclo atual</div>
+    <form class="entry f-card" id="formCartao">
+      <label>Valor (R$)<input type="number" step="0.01" min="0" id="ccValor" required></label>
+      <label>Descrição<input type="text" id="ccDesc" required placeholder="ex: mercado"></label>
+      <label>Data<input type="date" id="ccData" required></label>
+      <button type="submit" class="add">Lançar</button>
+    </form>
+    <div class="list" id="listCartaoAberto"></div>
+    <button class="close-cycle-btn" id="btnFecharFatura"><i data-icon="file-text" data-size="15"></i> Fechar fatura do ciclo e gerar despesa a pagar</button>
+
+    <div class="section-title">faturas fechadas</div>
+    <div class="list" id="listFaturas"></div>
+  </section>
+
+  <!-- DIVIDAS -->
+  <section class="panel" id="panel-dividas">
+    <form class="entry f-debt" id="formDivida">
+      <label>Valor parcela (R$)<input type="number" step="0.01" min="0" id="vValor" required></label>
+      <label>Descrição<input type="text" id="vDesc" required placeholder="ex: empréstimo consignado"></label>
+      <label>Parcelas<input type="number" min="1" id="vParcelas" value="1" required></label>
+      <label>1º vencimento<input type="date" id="vVenc" required></label>
+      <button type="submit" class="add">Lançar</button>
+    </form>
+    <div class="section-title">em aberto</div>
+    <div class="list" id="listDividasAbertas"></div>
+    <div class="section-title">quitadas</div>
+    <div class="list" id="listDividasQuitadas"></div>
+  </section>
+
+  <!-- AJUSTES -->
+  <section class="panel" id="panel-ajustes">
+    <div class="section-title">configurações</div>
+    <div id="settingsMount"></div>
+  </section>
+
+  <footer class="util">
+    <div class="status" id="saveStatus">dados protegidos por criptografia</div>
+    <div class="buttons">
+      <button id="btnExport"><i data-icon="download" data-size="14"></i> Exportar JSON</button>
+      <button id="btnImport"><i data-icon="upload" data-size="14"></i> Importar JSON</button>
+      <button id="btnReset"><i data-icon="trash" data-size="14"></i> Limpar tudo</button>
+      <button id="btnExportCert"><i data-icon="shield" data-size="14"></i> Exportar certificado</button>
+      <button id="btnImportCert"><i data-icon="shield-check" data-size="14"></i> Importar certificado</button>
+      <button id="btnBiometric"><i data-icon="settings" data-size="14"></i> Configurações</button>
+      <button id="btnRecover"><i data-icon="lock" data-size="14"></i> Bloquear / recuperar PIN</button>
+    </div>
+    <input type="file" id="importFile" accept="application/json">
+    <input type="file" id="importCertFile" accept="application/json" style="display:none">
+  </footer>
+
+</div>
+
+
+<script src="financ-icons.js"></script>
+<script src="secure-vault.js"></script>
+<script src="secure-ui.js"></script>
+<script src="app.js"></script>
+
+</body>
+</html>
