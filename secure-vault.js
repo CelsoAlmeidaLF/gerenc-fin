@@ -102,6 +102,8 @@
         return master;
       } finally { raw.fill(0); }
     }
+    // 'pin' (6 números) ou 'password' (senha longa, opcional e mais forte contra força bruta offline).
+    get kind() { try { return this.read().secretKind === 'password' ? 'password' : 'pin'; } catch (_) { return 'pin'; } }
     withPin(pin) { return unprotect(this.read().password, pin, idContext('password')); }
     withRecovery(code) { return unprotect(this.read().recovery, code, idContext('recovery')); }
     async withBiometric(prfSecret) {
@@ -112,7 +114,10 @@
     get biometric() {
       try { const b = this.read().biometric; return b ? { credentialId: b.credentialId, prfSalt: b.prfSalt } : null; } catch (_) { return null; }
     }
-    async setPin(master, pin) { const password = await protect(master, pin, idContext('password')); this.write(r => { r.password = password; }); }
+    async setPin(master, secret, kind = 'pin') {
+      const password = kind === 'password' ? await protectPassphrase(master, secret, idContext('password')) : await protect(master, secret, idContext('password'));
+      this.write(r => { r.password = password; if (kind === 'password') r.secretKind = 'password'; else delete r.secretKind; });
+    }
     async setRecovery(master, code) { const rec = await protectWithSecret(master, code, idContext('recovery')); this.write(r => { r.recovery = rec; }); }
     async setBiometric(master, credentialId, prfSalt, prfSecret) {
       const salt = random(16);
@@ -141,6 +146,9 @@
       this.identity = new Identity(storage); this.masterKey = null; this.certs = null;
     }
     get exists() { return this.storage.getItem(this.storageKey) !== null; }
+    // Segredo de abertura: PIN de 6 números ou senha longa (só com o FINANC ID).
+    get secretKind() { return this.linked || (!this.exists && this.identity.exists) ? this.identity.kind : 'pin'; }
+    secretOK(secret) { return this.secretKind === 'password' ? passphraseOK(secret) : pinOK(secret); }
     // Cofre ligado ao FINANC ID: não tem PIN, código nem biometria próprios.
     get linked() {
       try { const { envelope } = this.envelope ? { envelope: this.envelope } : this.readEnvelope(); return Boolean(envelope.identity); } catch (_) { return false; }
@@ -151,8 +159,8 @@
     // Com FINANC ID: o PIN é o dele e não há código novo (devolve null).
     async create(pin, initial = {}, recovery = recoveryCode()) {
       if (this.exists) throw new Error('O cofre já existe.');
-      if (!pinOK(pin)) throw new Error('Use um PIN de 6 números.');
       const hadIdentity = this.identity.exists;
+      if (hadIdentity ? typeof pin !== 'string' || !pin : !pinOK(pin)) throw new Error('Use um PIN de 6 números.');
       const master = hadIdentity ? await this.identity.withPin(pin) : await this.identity.create(pin, recovery);
       const rawKey = random(32);
       try {
@@ -249,7 +257,7 @@
       await this.openWith(await open(b, key, this.context('biometric')), envelope, stored);
     }
     async masterFromPin(pin) {
-      if (!pinOK(pin)) throw new Error('Use um PIN de 6 números.');
+      if (typeof pin !== 'string' || !pin) throw new Error('Digite o PIN ou a senha.');
       return this.identity.withPin(pin);
     }
     async verifyPin(pin) {
@@ -282,11 +290,22 @@
     }
     async changePin(currentPin, newPin) {
       this.assertOpen();
+      if (this.linked) {
+        const kind = this.secretKind;
+        if (!this.secretOK(newPin)) throw new Error(kind === 'password' ? 'Use uma senha com pelo menos ' + PASSPHRASE_MIN + ' caracteres.' : 'Use um PIN de 6 números.');
+        await this.identity.setPin(await this.masterFromPin(currentPin), newPin, kind); return;
+      }
       if (!pinOK(newPin)) throw new Error('Use um PIN de 6 números.');
-      if (this.linked) { await this.identity.setPin(await this.masterFromPin(currentPin), newPin); return; }
       const raw = await unprotect(this.envelope.password, currentPin, this.context('password'));
       this.envelope.password = await protect(raw, newPin, this.context('password'));
       this.dirty = true; await this.flush();
+    }
+    // Troca PIN por senha longa (ou volta ao PIN). Vale para todos os apps ligados ao FINANC ID.
+    async changeSecretKind(current, next, kind) {
+      this.assertOpen();
+      if (!this.linked) throw new Error('Ligue este app ao PIN único para usar senha.');
+      if (kind !== 'pin' && kind !== 'password') throw new Error('Tipo inválido.');
+      await this.identity.setPin(await this.masterFromPin(current), next, kind);
     }
     async rotateRecovery(pin, recovery = recoveryCode()) {
       this.assertOpen();
