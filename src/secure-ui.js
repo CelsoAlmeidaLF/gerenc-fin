@@ -2,6 +2,16 @@
 (function () {
   'use strict';
   const root = document.documentElement;
+  // Não abre dentro de moldura (iframe) de outro site: impede que o app seja embutido para enganar e capturar o PIN.
+  // O GitHub Pages não permite o cabeçalho frame-ancestors, então a proteção fica aqui.
+  if (window.top !== window.self) {
+    window.vaultReady = new Promise(() => {});
+    const gate = document.createElement('section'); gate.id = 'vaultGate';
+    const text = document.createElement('p'); text.textContent = 'Por segurança, este app só abre direto no navegador.';
+    const link = document.createElement('a'); link.href = location.href; link.target = '_top'; link.rel = 'noopener noreferrer'; link.textContent = 'Abrir o app';
+    gate.append(text, link); document.body.replaceChildren(gate);
+    return;
+  }
   const appId = root.dataset.vaultApp;
   const nativeStorage = window.localStorage;
   const LEGACY_KEYS = { 'cripito-sim': /^cripto[-:]/, 'cambio-sim': /^cambio_/, 'gerenc-fin': /^livro_caixa_/ };
@@ -417,7 +427,8 @@
     const message = document.createElement('section'); message.id = 'vaultGate'; message.className = 'vault-busy';
     message.innerHTML = '<div class="vault-badge">' + icon('lock', 22) + '</div><p>Salvando e bloqueando…</p>' + (VERSION ? '<small class="vault-version">' + VERSION + '</small>' : '');
     document.body.append(message);
-    try { await vault.lock(); location.reload(); }
+    // Bloqueou: some também a chave que cifra a sessão da aba (uma nova é criada ao abrir de novo).
+    try { await vault.lock(); await sessionStore('readwrite', store => store.delete(appId)).catch(() => {}); location.reload(); }
     catch (_) {
       message.replaceChildren();
       const badge = document.createElement('div'); badge.className = 'vault-badge vault-badge-danger'; badge.innerHTML = icon('alert', 22);
@@ -447,20 +458,23 @@
   window.addEventListener('pageshow', event => { if (event.persisted) location.reload(); });
   window.addEventListener('storage', event => { if (event.key === vault.storageKey && vault.key) window.lockVault(); });
   // PINs are collected in a masked, numeric field. Legacy secrets remain readable during migration.
-  window.askSecret = (label, create = false, legacy = false) => new Promise(resolve => {
+  // strong: senha longa para arquivos exportados (texto livre, mínimo de caracteres, com confirmação).
+  window.askSecret = (label, create = false, legacy = false, strong = false) => new Promise(resolve => {
+    if (strong) { create = true; legacy = true; }
     const dialog = document.createElement('dialog'); dialog.className = 'vault-dialog';
     const form = noAutofill(document.createElement('form')); form.method = 'dialog';
     const head = document.createElement('div'); head.className = 'vault-dialog-head'; head.innerHTML = '<span class="vault-badge">' + icon(create ? 'shield' : 'lock', 18) + '</span>';
     const title = document.createElement('p'); title.textContent = label; head.append(title);
     const input = noAutofill(document.createElement('input')); input.type = 'password'; input.required = true; input.setAttribute('aria-label', label);
-    const confirm = noAutofill(document.createElement('input')); confirm.type = 'password'; confirm.placeholder = 'Repita o PIN'; confirm.required = create; confirm.hidden = !create; confirm.setAttribute('aria-label', 'Repita o PIN');
+    const confirm = noAutofill(document.createElement('input')); confirm.type = 'password'; confirm.placeholder = strong ? 'Repita a senha' : 'Repita o PIN';
+    if (strong) { input.placeholder = 'Mínimo de ' + FinancVault.PASSPHRASE_MIN + ' caracteres'; input.minLength = FinancVault.PASSPHRASE_MIN; } confirm.required = create; confirm.hidden = !create; confirm.setAttribute('aria-label', 'Repita o PIN');
     if (!legacy) for (const field of [input, confirm]) { field.className = 'vault-pin'; field.inputMode = 'numeric'; field.pattern = '[0-9]{6}'; field.minLength = 6; field.maxLength = 6; field.placeholder = '••••••'; }
     const actions = document.createElement('div'); actions.className = 'vault-dialog-actions';
     const cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = 'Cancelar'; cancel.onclick = () => dialog.close();
     const submit = document.createElement('button'); submit.textContent = 'Confirmar';
     actions.append(cancel, submit);
     let result = null;
-    form.onsubmit = event => { if (!legacy && !FinancVault.pinOK(input.value)) { event.preventDefault(); input.setCustomValidity('Digite exatamente 6 números.'); input.reportValidity(); return; } if (create && input.value !== confirm.value) { event.preventDefault(); confirm.setCustomValidity('Os PINs não coincidem.'); confirm.reportValidity(); return; } result = input.value; };
+    form.onsubmit = event => { if (strong && !FinancVault.passphraseOK(input.value)) { event.preventDefault(); input.setCustomValidity('Use pelo menos ' + FinancVault.PASSPHRASE_MIN + ' caracteres. Uma frase fácil de lembrar funciona bem.'); input.reportValidity(); return; } if (!legacy && !FinancVault.pinOK(input.value)) { event.preventDefault(); input.setCustomValidity('Digite exatamente 6 números.'); input.reportValidity(); return; } if (create && input.value !== confirm.value) { event.preventDefault(); confirm.setCustomValidity('Os PINs não coincidem.'); confirm.reportValidity(); return; } result = input.value; };
     input.oninput = () => input.setCustomValidity('');
     confirm.oninput = () => confirm.setCustomValidity('');
     dialog.onclose = () => { input.value = ''; confirm.value = ''; dialog.remove(); resolve(result); };
@@ -696,9 +710,9 @@
   };
   window.vaultSettings = () => window.FinancSettings.open();
   window.exportProtected = async (value, context, filename) => {
-    const pin = await window.askSecret('Crie um PIN de 6 números para este arquivo:', true);
-    if (!pin) return;
-    const payload = await FinancVault.protect(value, pin, context);
+    const passphrase = await window.askSecret('Crie uma senha para este arquivo (mínimo de ' + FinancVault.PASSPHRASE_MIN + ' caracteres; pode ser uma frase):', true, true, true);
+    if (!passphrase) return;
+    const payload = await FinancVault.protectPassphrase(value, passphrase, context);
     const url = URL.createObjectURL(new Blob([JSON.stringify(payload)], { type: 'application/json' }));
     const a = document.createElement('a'); a.href = url; a.download = filename; a.click(); URL.revokeObjectURL(url);
   };
@@ -707,7 +721,7 @@
   window.importCertificate = async (payload, context) => {
     if (payload && payload.format === 'financ-encrypted-v1') {
       if (!CERT_CONTEXT.test(payload.context || '') && payload.context !== context) throw new Error('Certificado inválido.');
-      const pin = await window.askSecret('PIN do certificado:');
+      const pin = await window.askSecret('Senha do certificado (ou o PIN, em arquivos antigos):', false, true);
       if (!pin) throw new Error('Importação cancelada.');
       payload = await FinancVault.unprotect(payload, pin, payload.context);
     } else if (!confirm('Este certificado antigo está sem criptografia. Importar e protegê-lo no cofre? Depois exporte uma cópia protegida.')) throw new Error('Importação cancelada.');

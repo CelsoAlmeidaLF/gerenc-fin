@@ -459,9 +459,9 @@
     var reader=new FileReader();
     reader.onload=async function(ev){
       try {
-        var payload=JSON.parse(ev.target.result), data;
+        var payload=JSON.parse(ev.target.result), data, oldFormat=false;
         if (payload && payload.format === 'financ-encrypted-v1') {
-          const password = await window.askSecret('PIN do backup:');
+          const password = await window.askSecret('Senha do backup (ou o PIN, em arquivos antigos):', false, true);
           if (!password) return;
           data = await FinancVault.unprotect(payload, password, 'gerenc-fin:backup');
         } else if (payload && payload.encrypted) {
@@ -471,13 +471,14 @@
           if (payload.certProtected && (!cert || payload.certId !== cert.id)) throw new Error('certificado do dispositivo não corresponde');
           var key=await deriveKey(pin,fromB64(payload.salt),payload.certProtected ? cert : null);
           data=await unseal({iv:payload.iv,ciphertext:payload.ciphertext},key);
+          oldFormat=true; // formato anterior ao cofre (150 mil iterações): vale exportar de novo
         } else {
           throw new Error('backup não criptografado');
         }
         if (!confirm('Importar este arquivo vai substituir todos os dados atuais. Continuar?')) return;
         normalizeState(data); await save(); renderAll();
-        document.getElementById('saveStatus').textContent='backup importado e salvo criptografado';
-      } catch(err) { alert('Backup inválido, PIN incorreto ou arquivo não criptografado.'); }
+        document.getElementById('saveStatus').textContent='backup importado e salvo criptografado'+(oldFormat?'. Este backup usa a proteção antiga: exporte um novo para ficar com a proteção atual.':'');
+      } catch(err) { alert('Backup inválido, senha incorreta ou arquivo não criptografado.'); }
     };
     reader.readAsText(file); e.target.value='';
   });
