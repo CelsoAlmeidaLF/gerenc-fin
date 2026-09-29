@@ -1,5 +1,5 @@
 /* FINANC vault UI. Usa os tokens do app (--bg, --surface, --accent...) com fallback no tema escuro padrão. */
-html.vault-locked body > :not(#vaultGate) { display:none !important; }
+html.vault-locked body > :not(#vaultGate):not(.vault-dialog) { display:none !important; }
 html.vault-locked body { min-height:100vh; min-height:100dvh; display:grid; place-items:center; margin:0; padding:20px 16px; box-sizing:border-box; background:var(--bg, #0e1210); color:var(--ink, #eaf0ec);
   background-image:radial-gradient(120% 60% at 50% 0%, color-mix(in srgb, var(--accent, #6fcf97) 10%, transparent), transparent 70%); }
 .fi { display:inline-block; flex-shrink:0; vertical-align:middle; }

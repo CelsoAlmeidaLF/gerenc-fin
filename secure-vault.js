@@ -57,30 +57,105 @@
     };
   }
   function recoveryCode() { return Array.from(random(32), n => n.toString(16).padStart(2, '0')).join('').match(/.{8}/g).join('-'); }
+  const importAes = raw => crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt', 'decrypt']);
+
+  // FINANC ID: um PIN, um código de recuperação, uma biometria e os certificados valem para todos os apps
+  // do mesmo endereço (mesma origem = mesmo localStorage). Guarda uma chave principal aleatória, protegida
+  // pelo PIN, pelo código e pela biometria; cada app guarda a própria chave de dados embrulhada por ela.
+  const ID_KEY = 'financ-id-v1';
+  const idContext = part => 'financ-id:v1:' + part;
+  const certOK = c => c && typeof c.id === 'string' && /^[A-Za-z0-9_-]{1,80}$/.test(c.id) && typeof c.secret === 'string' && (() => { try { return atob(c.secret).length === 32; } catch (_) { return false; } })();
+  const cleanCert = c => ({ version: 1, id: c.id, secret: c.secret, createdAt: c.createdAt || new Date().toISOString() });
+  class Identity {
+    constructor(storage) { this.storage = storage; }
+    get exists() { return this.storage.getItem(ID_KEY) !== null; }
+    read() {
+      const record = JSON.parse(this.storage.getItem(ID_KEY));
+      if (!record || record.version !== 1 || !record.password || !record.recovery) throw new Error('FINANC ID inválido.');
+      return record;
+    }
+    // Relê antes de gravar: outro app pode ter mudado o registro (PIN, biometria, certificados).
+    write(change) {
+      const record = this.exists ? this.read() : { version: 1 };
+      change(record);
+      const next = JSON.stringify(record);
+      this.storage.setItem(ID_KEY, next);
+      if (this.storage.getItem(ID_KEY) !== next) throw new Error('Falha ao gravar o FINANC ID.');
+      return record;
+    }
+    async create(pin, recovery) {
+      if (this.exists) throw new Error('O FINANC ID já existe.');
+      const raw = random(32);
+      try {
+        const master = b64(raw);
+        const password = await protect(master, pin, idContext('password'));
+        const rec = await protectWithSecret(master, recovery, idContext('recovery'));
+        this.write(r => { r.password = password; r.recovery = rec; });
+        return master;
+      } finally { raw.fill(0); }
+    }
+    withPin(pin) { return unprotect(this.read().password, pin, idContext('password')); }
+    withRecovery(code) { return unprotect(this.read().recovery, code, idContext('recovery')); }
+    async withBiometric(prfSecret) {
+      const b = this.read().biometric;
+      if (!b || typeof b.salt !== 'string') throw new Error('Biometria não configurada.');
+      return open(b, await hkdfKey(prfSecret, unb64(b.salt), idContext('biometric')), idContext('biometric'));
+    }
+    get biometric() {
+      try { const b = this.read().biometric; return b ? { credentialId: b.credentialId, prfSalt: b.prfSalt } : null; } catch (_) { return null; }
+    }
+    async setPin(master, pin) { const password = await protect(master, pin, idContext('password')); this.write(r => { r.password = password; }); }
+    async setRecovery(master, code) { const rec = await protectWithSecret(master, code, idContext('recovery')); this.write(r => { r.recovery = rec; }); }
+    async setBiometric(master, credentialId, prfSalt, prfSecret) {
+      const salt = random(16);
+      const sealed = await seal(master, await hkdfKey(prfSecret, salt, idContext('biometric')), idContext('biometric'));
+      this.write(r => { r.biometric = { credentialId, prfSalt, salt: b64(salt), ...sealed }; });
+    }
+    clearBiometric() { this.write(r => { delete r.biometric; }); }
+    async certificates(masterKey) {
+      const sealed = this.read().certificates;
+      if (!sealed) return [];
+      const list = await open(sealed, masterKey, idContext('certificates'));
+      return Array.isArray(list) ? list.filter(certOK).map(cleanCert) : [];
+    }
+    async setCertificates(masterKey, list) {
+      const sealed = await seal(list.map(cleanCert), masterKey, idContext('certificates'));
+      this.write(r => { r.certificates = sealed; });
+    }
+  }
+
   class Vault {
     constructor(storage, appId, onError = () => {}) {
       this.storage = storage; this.appId = appId; this.storageKey = 'financ-vault-v1:' + appId;
       this.onError = onError; this.key = null; this.values = null; this.envelope = null;
       this.pending = null; this.dirty = false; this.lastStored = null; this.closing = false; this.prefs = null;
       this.sessionKey = null; this.session = null;
+      this.identity = new Identity(storage); this.masterKey = null; this.certs = null;
     }
     get exists() { return this.storage.getItem(this.storageKey) !== null; }
+    // Cofre ligado ao FINANC ID: não tem PIN, código nem biometria próprios.
+    get linked() {
+      try { const { envelope } = this.envelope ? { envelope: this.envelope } : this.readEnvelope(); return Boolean(envelope.identity); } catch (_) { return false; }
+    }
     context(part) { return this.appId + ':vault-v1:' + part; }
     assertOpen() { if (!this.key || !this.values || this.closing) throw new Error('Cofre bloqueado.'); }
+    // Sem FINANC ID: cria um com este PIN e devolve o código de recuperação (exibir uma vez).
+    // Com FINANC ID: o PIN é o dele e não há código novo (devolve null).
     async create(pin, initial = {}, recovery = recoveryCode()) {
       if (this.exists) throw new Error('O cofre já existe.');
       if (!pinOK(pin)) throw new Error('Use um PIN de 6 números.');
+      const hadIdentity = this.identity.exists;
+      const master = hadIdentity ? await this.identity.withPin(pin) : await this.identity.create(pin, recovery);
       const rawKey = random(32);
       try {
-        this.key = await crypto.subtle.importKey('raw', rawKey, 'AES-GCM', false, ['encrypt', 'decrypt']);
+        this.key = await importAes(rawKey);
         this.values = Object.assign(Object.create(null), initial);
-        await this.sealSession(b64(rawKey));
-        this.envelope = { version: 1, appId: this.appId,
-          password: await protect(b64(rawKey), pin, this.context('password')),
-          recovery: await protectWithSecret(b64(rawKey), recovery, this.context('recovery')) };
+        await this.useMaster(master);
+        this.envelope = { version: 1, appId: this.appId, identity: await seal(b64(rawKey), this.masterKey, this.context('identity')) };
+        await this.sealSession(b64(rawKey), master);
         this.dirty = true;
         await this.flush();
-        return recovery;
+        return hadIdentity ? null : recovery;
       } catch (error) { this.forget(); throw error; }
       finally { rawKey.fill(0); }
     }
@@ -91,32 +166,94 @@
       return { stored, envelope };
     }
     get biometric() {
+      if (this.linked) return this.identity.biometric;
       try {
         const { envelope } = this.envelope ? { envelope: this.envelope } : this.readEnvelope();
         const b = envelope.biometric;
         return b ? { credentialId: b.credentialId, prfSalt: b.prfSalt } : null;
       } catch (_) { return null; }
     }
+    async useMaster(master) {
+      const raw = unb64(master);
+      try { this.masterKey = await importAes(raw); } finally { raw.fill(0); }
+      try { this.certs = await this.identity.certificates(this.masterKey); } catch (_) { this.certs = []; }
+    }
+    async openLinked(master, envelope, stored) {
+      await this.useMaster(master);
+      await this.openWith(await open(envelope.identity, this.masterKey, this.context('identity')), envelope, stored, master);
+    }
+    // Abre com o PIN. Devolve o que a interface precisa fazer em seguida:
+    //   { recovery }         FINANC ID criado agora (primeiro app migrado): mostrar o código uma vez.
+    //   { needsIdentityPin } app aberto com o PIN antigo, mas o FINANC ID tem outro PIN: pedir o PIN FINANC.
+    // Erro 'LEGACY_PIN': o PIN é o do FINANC ID, mas este app ainda usa o PIN antigo dele.
     async unlock(secret, recovery = false) {
       const { stored, envelope } = this.readEnvelope();
+      if (envelope.identity) {
+        const master = recovery ? await this.identity.withRecovery(secret) : await this.identity.withPin(secret);
+        await this.openLinked(master, envelope, stored);
+        return {};
+      }
       const kind = recovery ? 'recovery' : 'password';
-      await this.openWith(await unprotect(envelope[kind], secret, this.context(kind)), envelope, stored);
+      try {
+        await this.openWith(await unprotect(envelope[kind], secret, this.context(kind)), envelope, stored);
+      } catch (error) {
+        if (recovery || error.name !== 'OperationError' || !this.identity.exists) throw error;
+        await this.identity.withPin(secret); // PIN FINANC certo, PIN antigo do app diferente.
+        const legacy = new Error('Digite o PIN antigo deste app uma única vez para ligá-lo ao PIN FINANC.'); legacy.code = 'LEGACY_PIN';
+        throw legacy;
+      }
+      return recovery ? {} : this.linkAfterLegacy(secret);
+    }
+    async linkAfterLegacy(pin, recovery) {
+      if (!this.identity.exists) { const code = recovery || recoveryCode(); await this.link(await this.identity.create(pin, code)); return { recovery: code }; }
+      try { await this.link(await this.identity.withPin(pin)); return {}; }
+      catch (error) { if (error.name === 'OperationError') return { needsIdentityPin: true }; throw error; }
+    }
+    // Com o app aberto pelo PIN antigo: liga ao FINANC ID usando o PIN FINANC.
+    async linkWithIdentityPin(pin) { this.assertOpen(); await this.link(await this.identity.withPin(pin)); }
+    // PIN FINANC digitado primeiro (erro LEGACY_PIN): abre com o PIN antigo e liga.
+    async unlockLegacy(oldPin, identityPin) {
+      const { stored, envelope } = this.readEnvelope();
+      const master = await this.identity.withPin(identityPin);
+      await this.openWith(await unprotect(envelope.password, oldPin, this.context('password')), envelope, stored);
+      await this.link(master);
+    }
+    // Troca PIN, código e biometria próprios do app pela chave embrulhada pelo FINANC ID.
+    async link(master) {
+      this.assertOpen();
+      const appRaw = this.rawForLink;
+      if (!appRaw) throw new Error('Cofre bloqueado.');
+      await this.useMaster(master);
+      const next = { version: 1, appId: this.appId, identity: await seal(appRaw, this.masterKey, this.context('identity')) };
+      if (this.envelope.settings) next.settings = this.envelope.settings;
+      if (this.envelope.payload) next.payload = this.envelope.payload;
+      this.envelope = next;
+      this.rawForLink = null;
+      await this.sealSession(appRaw, master);
+      this.dirty = true; await this.flush();
     }
     async unlockBiometric(prfSecret) {
       const { stored, envelope } = this.readEnvelope();
+      if (envelope.identity) { await this.openLinked(await this.identity.withBiometric(prfSecret), envelope, stored); return; }
       const b = envelope.biometric;
       if (!b || typeof b.salt !== 'string') throw new Error('Biometria não configurada.');
       const key = await hkdfKey(prfSecret, unb64(b.salt), this.context('biometric'));
       await this.openWith(await open(b, key, this.context('biometric')), envelope, stored);
     }
+    async masterFromPin(pin) {
+      if (!pinOK(pin)) throw new Error('Use um PIN de 6 números.');
+      return this.identity.withPin(pin);
+    }
     async verifyPin(pin) {
       this.assertOpen();
+      if (this.linked) { await this.masterFromPin(pin); return; }
       if (!pinOK(pin)) throw new Error('Use um PIN de 6 números.');
       await unprotect(this.envelope.password, pin, this.context('password'));
     }
     async enableBiometric(pin, credentialId, prfSalt, prfSecret) {
       this.assertOpen();
       if (typeof credentialId !== 'string' || typeof prfSalt !== 'string') throw new Error('Credencial inválida.');
+      if (this.linked) { await this.identity.setBiometric(await this.masterFromPin(pin), credentialId, prfSalt, prfSecret); return; }
       // O PIN autoriza a operação e libera a chave bruta, que é embrulhada pela biometria.
       const raw = await unprotect(this.envelope.password, pin, this.context('password'));
       const salt = random(16);
@@ -138,17 +275,20 @@
     async changePin(currentPin, newPin) {
       this.assertOpen();
       if (!pinOK(newPin)) throw new Error('Use um PIN de 6 números.');
+      if (this.linked) { await this.identity.setPin(await this.masterFromPin(currentPin), newPin); return; }
       const raw = await unprotect(this.envelope.password, currentPin, this.context('password'));
       this.envelope.password = await protect(raw, newPin, this.context('password'));
       this.dirty = true; await this.flush();
     }
     async rotateRecovery(pin, recovery = recoveryCode()) {
       this.assertOpen();
+      if (this.linked) { await this.identity.setRecovery(await this.masterFromPin(pin), recovery); return recovery; }
       const raw = await unprotect(this.envelope.password, pin, this.context('password'));
       this.envelope.recovery = await protectWithSecret(raw, recovery, this.context('recovery'));
       this.dirty = true; await this.flush();
       return recovery;
     }
+    // Apaga só o cofre deste app; o FINANC ID continua valendo para os outros.
     async destroy(pin) {
       await this.verifyPin(pin);
       if (this.pending) await this.pending.catch(() => {});
@@ -157,14 +297,15 @@
     }
     async disableBiometric() {
       this.assertOpen();
+      if (this.linked) { this.identity.clearBiometric(); return; }
       delete this.envelope.biometric;
       this.dirty = true; await this.flush();
     }
-    async openWith(rawB64, envelope, stored) {
+    async openWith(rawB64, envelope, stored, master = null) {
       const rawKey = unb64(rawB64);
       try {
-        const key = await crypto.subtle.importKey('raw', rawKey, 'AES-GCM', false, ['encrypt', 'decrypt']);
-        const values = await open(envelope.payload, key, this.context('data'));
+        const key = await importAes(rawKey);
+        const values = envelope.payload ? await open(envelope.payload, key, this.context('data')) : {};
         if (!values || typeof values !== 'object' || Array.isArray(values) || Object.values(values).some(v => typeof v !== 'string')) throw new Error('Dados inválidos.');
         // Preferência adulterada ou ilegível volta ao padrão (15 min, sem bloqueio ao sair).
         let prefs = { ...DEFAULT_SETTINGS };
@@ -172,28 +313,54 @@
         this.prefs = prefs;
         this.key = key; this.values = Object.assign(Object.create(null), values); this.envelope = envelope;
         this.lastStored = stored; this.closing = false;
-        await this.sealSession(rawB64);
+        this.rawForLink = envelope.identity ? null : rawB64;
+        await this.sealSession(rawB64, master);
       } finally { rawKey.fill(0); }
     }
-    // Sessão da aba: a chave bruta é cifrada por uma chave de sessão não-exportável (fornecida pela interface),
+    // Sessão da aba: as chaves brutas são cifradas por uma chave de sessão não-exportável (fornecida pela interface),
     // para reabrir o cofre ao recarregar a página sem pedir o PIN. Só o blob cifrado sai daqui.
-    async sealSession(rawB64) {
-      this.session = this.sessionKey ? await seal(rawB64, this.sessionKey, this.context('session')) : null;
+    async sealSession(rawB64, master = null) {
+      this.session = this.sessionKey ? await seal(master ? { k: rawB64, m: master } : rawB64, this.sessionKey, this.context('session')) : null;
     }
     async resume(blob) {
       if (!this.sessionKey) throw new Error('Sessão indisponível.');
       const { stored, envelope } = this.readEnvelope();
-      await this.openWith(await open(blob, this.sessionKey, this.context('session')), envelope, stored);
+      const saved = await open(blob, this.sessionKey, this.context('session'));
+      if (saved && typeof saved === 'object' && typeof saved.k === 'string' && typeof saved.m === 'string') {
+        if (!envelope.identity) throw new Error('Sessão inválida.');
+        await this.useMaster(saved.m);
+        await this.openWith(saved.k, envelope, stored, saved.m);
+      } else if (typeof saved === 'string' && !envelope.identity) await this.openWith(saved, envelope, stored);
+      else throw new Error('Sessão inválida.');
     }
     // O código usado deixa de valer: um novo é gerado e devolvido para ser exibido uma única vez.
-    async resetPassword(recovery, newPin, nextRecovery = recoveryCode()) {
+    // Devolve { recovery, needsIdentityPin? }. Sem cofre deste app ainda, redefine o PIN FINANC e cria o cofre.
+    async resetPassword(recovery, newPin, nextRecovery = recoveryCode(), initial = {}) {
       if (!pinOK(newPin)) throw new Error('Use um PIN de 6 números.');
+      if (!this.exists || this.linked) {
+        const master = await this.identity.withRecovery(recovery);
+        await this.identity.setPin(master, newPin);
+        await this.identity.setRecovery(master, nextRecovery);
+        if (this.exists) await this.unlock(newPin); else await this.create(newPin, initial);
+        return { recovery: nextRecovery };
+      }
+      // App ainda com PIN próprio: abre com o código dele e tenta ligar ao FINANC ID com o novo PIN.
       await this.unlock(recovery, true);
+      const status = await this.linkAfterLegacy(newPin, nextRecovery);
+      if (!status.needsIdentityPin) return status; // { recovery } se criou o FINANC ID; {} se ligou ao existente
       const raw = await unprotect(this.envelope.recovery, recovery, this.context('recovery'));
       this.envelope.password = await protect(raw, newPin, this.context('password'));
       this.envelope.recovery = await protectWithSecret(raw, nextRecovery, this.context('recovery'));
       this.dirty = true; await this.flush();
-      return nextRecovery;
+      return { recovery: nextRecovery, needsIdentityPin: true };
+    }
+    // Certificados FINANC (compartilhados). Só com o cofre aberto e ligado ao FINANC ID.
+    get certificates() { return this.certs ? this.certs.map(c => ({ ...c })) : []; }
+    async saveCertificates(list) {
+      this.assertOpen();
+      if (!this.masterKey) throw new Error('Ligue este app ao PIN FINANC para usar o certificado.');
+      await this.identity.setCertificates(this.masterKey, list);
+      this.certs = list.map(cleanCert);
     }
     getItem(name) { this.assertOpen(); return Object.hasOwn(this.values, name) ? this.values[name] : null; }
     setItem(name, value) { this.assertOpen(); this.values[name] = String(value); this.changed(); }
@@ -226,7 +393,7 @@
       const keys = Array.from({ length: this.storage.length }, (_, i) => this.storage.key(i));
       for (const key of keys) if (matches(key) && this.storage.getItem(key) === this.getItem(key)) this.storage.removeItem(key);
     }
-    forget() { this.key = null; this.values = null; this.envelope = null; this.prefs = null; this.session = null; this.closing = false; }
+    forget() { this.key = null; this.values = null; this.envelope = null; this.prefs = null; this.session = null; this.closing = false; this.masterKey = null; this.certs = null; this.rawForLink = null; }
     async lock() { this.closing = true; try { await this.flush(); this.forget(); } catch (error) { this.closing = false; throw error; } }
   }
 
@@ -278,7 +445,7 @@
       try { PublicKeyCredential.signalUnknownCredential({ rpId: location.hostname, credentialId: b64url(credentialId) }).catch(() => {}); } catch (_) {}
     },
   };
-  const api = { Vault, protect, unprotect, pinOK, recoveryCode, webauthn, AUTO_LOCK_MINUTES };
+  const api = { Vault, Identity, protect, unprotect, pinOK, recoveryCode, webauthn, AUTO_LOCK_MINUTES, certOK };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.FinancVault = api;
 })(globalThis);
