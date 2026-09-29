@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="pt-BR" class="vault-locked" data-vault-version="1.5.2" data-vault-app="gerenc-fin" data-vault-name="Livro-Caixa" data-vault-themes="system dark light">
+<html lang="pt-BR" class="vault-locked" data-vault-version="1.5.3" data-vault-app="gerenc-fin" data-vault-name="Livro-Caixa">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -320,22 +320,15 @@
   #securityGate p { color:var(--ink-dim); line-height:1.45; }
   #securityGate input { display:none; }
 
+  /* Tema claro: segue o sistema do aparelho. */
   @media (prefers-color-scheme: light) {
-    :root:not([data-theme="dark"]) {
+    :root {
       --bg: #F7FAF8; --surface: #FFFFFF; --surface-2: #EFF4F0; --line: #DCE6E0;
       --ink: #16211B; --ink-dim: #667F72; --accent: #2E8B57; --accent-dim: #4EA976;
       --green: #2E8B57; --green-bg: rgba(46,139,87,0.12);
       --rust: #C1584A; --rust-bg: rgba(193,88,74,0.12);
       --gold: #9A7B2E; --gold-bg: rgba(154,123,46,0.12);
     }
-  }
-  /* Tema escolhido em Ajustes */
-  :root[data-theme="light"] {
-    --bg: #F7FAF8; --surface: #FFFFFF; --surface-2: #EFF4F0; --line: #DCE6E0;
-    --ink: #16211B; --ink-dim: #667F72; --accent: #2E8B57; --accent-dim: #4EA976;
-    --green: #2E8B57; --green-bg: rgba(46,139,87,0.12);
-    --rust: #C1584A; --rust-bg: rgba(193,88,74,0.12);
-    --gold: #9A7B2E; --gold-bg: rgba(154,123,46,0.12);
   }
   nav.tabs button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; white-space: nowrap; }
 </style>
