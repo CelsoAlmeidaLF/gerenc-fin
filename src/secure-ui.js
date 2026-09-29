@@ -46,6 +46,7 @@
     + '<div class="vault-badge" id="vaultBadge">' + icon('lock', 22) + '</div>'
     + '<h1 id="vaultTitle">Dados protegidos</h1><p id="vaultHelp"></p>'
     + '<form id="vaultForm" novalidate' + NO_AUTOFILL + '>'
+    + '<label id="vaultPasswordLabel" class="vault-field" hidden>Senha<input id="vaultPassword" type="password"' + NO_AUTOFILL + ' autocapitalize="none" spellcheck="false" maxlength="256"></label>'
     + '<label id="vaultRecoveryLabel" class="vault-field" hidden>Código de recuperação<input id="vaultRecovery"' + NO_AUTOFILL + ' autocapitalize="none" spellcheck="false" placeholder="xxxxxxxx-xxxxxxxx-…"></label>'
     + '<div class="vault-pin-wrap" id="vaultPinWrap"><input id="vaultPin" name="vault-pin" class="vault-pin-input"' + NO_AUTOFILL + ' type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" aria-label="PIN de 6 números" aria-describedby="vaultHelp vaultMessage">'
     + '<div class="vault-dots" id="vaultDots" aria-hidden="true">' + '<span></span>'.repeat(6) + '</div></div>'
@@ -186,11 +187,14 @@
     'recover-pin': ['Novo PIN', 'Escolha um novo PIN de 6 números.', 'Continuar', 'key'],
     'recover-confirm': ['Confirme o novo PIN', 'Digite o novo PIN mais uma vez.', 'Definir novo PIN', 'key'],
   };
+  // Com senha longa (opção nas Configurações), abrir e entrar usam um campo de texto no lugar do teclado de PIN.
+  const passwordMode = () => (step === 'unlock' || step === 'join') && vault.secretKind === 'password';
+  const secretReady = () => passwordMode() ? get('vaultPassword').value.length > 0 : pinInput.value.length === 6;
   function setBusy(value) {
     busy = value;
     const off = value || blocked;
-    get('vaultSubmit').disabled = off || (PIN_STEPS.has(step) && pinInput.value.length !== 6);
-    pinInput.disabled = off;
+    get('vaultSubmit').disabled = off || (PIN_STEPS.has(step) && !secretReady());
+    pinInput.disabled = off; get('vaultPassword').disabled = off;
     panel.querySelectorAll('#vaultKeypad button').forEach(b => { b.disabled = off; });
   }
   function refreshBiometric() {
@@ -199,12 +203,13 @@
     const show = step === 'unlock' && bioAvailable && Boolean(vault.biometric);
     key.classList.toggle('is-off', !show);
     key.tabIndex = show ? 0 : -1;
-    if (step === 'unlock') get('vaultHelp').textContent = show ? 'Digite seu PIN ou toque na digital para usar a biometria.' : COPY.unlock[1];
+    const secret = passwordMode() ? 'sua senha' : 'seu PIN';
+    if (step === 'unlock') get('vaultHelp').textContent = show ? 'Digite ' + secret + ' ou toque na digital para usar a biometria.' : 'Digite ' + secret + ' para abrir o aplicativo.';
   }
   function renderDots() {
     const n = pinInput.value.length;
     get('vaultDots').querySelectorAll('span').forEach((dot, i) => dot.classList.toggle('filled', i < n));
-    if (!busy && !blocked) get('vaultSubmit').disabled = PIN_STEPS.has(step) && n !== 6;
+    if (!busy && !blocked) get('vaultSubmit').disabled = PIN_STEPS.has(step) && !secretReady();
   }
   function go(next) {
     step = next;
@@ -212,13 +217,16 @@
     get('vaultTitle').textContent = title; get('vaultHelp').textContent = help;
     get('vaultSubmit').textContent = action;
     get('vaultBadge').innerHTML = icon(badge, 22);
-    const pinStep = PIN_STEPS.has(step);
-    get('vaultPinWrap').hidden = !pinStep; get('vaultKeypad').hidden = !pinStep;
+    const pinStep = PIN_STEPS.has(step), usePassword = passwordMode();
+    get('vaultPinWrap').hidden = !pinStep || usePassword; get('vaultKeypad').hidden = !pinStep || usePassword;
+    get('vaultPasswordLabel').hidden = !usePassword; get('vaultPassword').value = '';
+    get('vaultRecover').innerHTML = icon('key', 16) + (usePassword ? 'Esqueci a senha' : 'Esqueci o PIN');
+    if (usePassword && step === 'join') { get('vaultTitle').textContent = 'Use sua senha'; get('vaultHelp').textContent = 'Você já tem uma senha neste aparelho. Digite-a para abrir o ' + appName + '.'; }
     get('vaultRecoveryLabel').hidden = step !== 'recover-code';
     get('vaultRecover').hidden = step !== 'unlock' && step !== 'join';
     get('vaultBack').hidden = step === 'unlock' || step === 'join' || step === 'create';
     pinInput.value = ''; get('vaultDots').classList.remove('vault-shake'); renderDots(); refreshBiometric();
-    if (!blocked) (pinStep ? pinInput : get('vaultRecovery')).focus({ preventScroll: true });
+    if (!blocked) (usePassword ? get('vaultPassword') : pinStep ? pinInput : get('vaultRecovery')).focus({ preventScroll: true });
   }
   // Touch devices use the on-screen keypad; physical keyboards type into the input.
   if (matchMedia('(pointer: coarse)').matches) pinInput.inputMode = 'none';
@@ -246,8 +254,9 @@
   function fail(message) {
     get('vaultMessage').textContent = message;
     const dots = get('vaultDots'); dots.classList.remove('vault-shake'); void dots.offsetWidth; dots.classList.add('vault-shake');
-    pinInput.value = ''; renderDots();
+    pinInput.value = ''; get('vaultPassword').value = ''; renderDots();
   }
+  get('vaultPassword').oninput = () => renderDots();
   // Sem cofre deste app: com FINANC ID no aparelho, só pede o PIN dele; sem, cria o PIN FINANC.
   const firstStep = () => vault.exists ? 'unlock' : vault.identity.exists ? 'join' : 'create';
   go(firstStep());
@@ -349,13 +358,13 @@
     event.preventDefault();
     if (busy || blocked) return;
     get('vaultMessage').textContent = '';
-    const pin = pinInput.value;
+    const pin = passwordMode() ? get('vaultPassword').value : pinInput.value;
     if (step === 'recover-code') {
       recoveryInput = get('vaultRecovery').value.trim().toLowerCase();
       if (!/^[0-9a-f]{8}(-[0-9a-f]{8}){7}$/.test(recoveryInput)) { get('vaultMessage').textContent = 'Código de recuperação inválido.'; return; }
       go('recover-pin'); return;
     }
-    if (!FinancVault.pinOK(pin)) { fail('Digite exatamente 6 números.'); return; }
+    if (passwordMode() ? !pin : !FinancVault.pinOK(pin)) { fail(passwordMode() ? 'Digite sua senha.' : 'Digite exatamente 6 números.'); return; }
     if (step === 'create' || step === 'recover-pin') { firstPin = pin; go(step === 'create' ? 'create-confirm' : 'recover-confirm'); return; }
     if ((step === 'create-confirm' || step === 'recover-confirm') && pin !== firstPin) {
       firstPin = ''; go(step === 'create-confirm' ? 'create' : 'recover-pin'); fail('Os PINs não coincidem. Comece de novo.'); return;
@@ -392,7 +401,7 @@
       const wrong = error.name === 'OperationError';
       const delay = wrong ? Math.min(30000, failedAttempts * failedAttempts * 500) : 0;
       if (wrong && step === 'recover-confirm') go('recover-code');
-      fail(wrong ? (step === 'recover-code' ? 'Código de recuperação incorreto.' : 'PIN incorreto.') : error.message);
+      fail(wrong ? (step === 'recover-code' ? 'Código de recuperação incorreto.' : passwordMode() ? 'Senha incorreta.' : 'PIN incorreto.') : error.message);
       if (delay) {
         const message = get('vaultMessage').textContent; const until = Date.now() + delay;
         clearInterval(countdown);
@@ -412,12 +421,14 @@
     if (status.recovery) showRecoveryCode(status.recovery, pin, kind); else offerBiometric(pin);
   }
   async function askIdentityPin() {
-    let label = 'Os outros apps usam outro PIN. Digite esse PIN para usar um só em todos (Cancelar mantém o PIN deste app):';
+    const text = vault.identity.kind === 'password';
+    let label = text ? 'Os outros apps usam uma senha. Digite essa senha para usar a mesma em todos (Cancelar mantém o PIN deste app):'
+      : 'Os outros apps usam outro PIN. Digite esse PIN para usar um só em todos (Cancelar mantém o PIN deste app):';
     for (let tries = 0; tries < 5; tries++) {
-      const pin = await window.askSecret(label);
+      const pin = await window.askSecret(label, false, text);
       if (!pin) return null;
       try { await vault.linkWithIdentityPin(pin); return pin; }
-      catch (error) { if (error.name !== 'OperationError') throw error; label = 'PIN incorreto. Tente de novo:'; }
+      catch (error) { if (error.name !== 'OperationError') throw error; label = text ? 'Senha incorreta. Tente de novo:' : 'PIN incorreto. Tente de novo:'; }
     }
     return null;
   }
@@ -558,13 +569,14 @@
   async function withPin(label, action) {
     const wait = pinBlockedUntil - Date.now();
     if (wait > 0) throw new Error('Muitas tentativas. Aguarde ' + Math.ceil(wait / 1000) + 's.');
-    const pin = await window.askSecret(label);
+    const text = vault.secretKind === 'password';
+    const pin = await window.askSecret(text ? label.replace(/\bseu PIN\b/, 'sua senha').replace(/\bo PIN\b/, 'a senha') : label, false, text);
     if (!pin) return null;
     try { const result = await action(pin); pinFailures = 0; return result ?? true; }
     catch (error) {
       if (error.name === 'OperationError') {
         pinFailures += 1; pinBlockedUntil = Date.now() + Math.min(30000, pinFailures * pinFailures * 500);
-        throw new Error('PIN incorreto.');
+        throw new Error(vault.secretKind === 'password' ? 'Senha incorreta.' : 'PIN incorreto.');
       }
       throw error;
     }
@@ -610,7 +622,10 @@
     const size = (() => { try { return (nativeStorage.getItem(vault.storageKey) || '').length; } catch (_) { return 0; } })();
     let html = group('Segurança',
       (vault.linked ? '' : actionRow('link', 'link', 'Usar o PIN único', 'Um só PIN, código e biometria para todos os apps.'))
-      + actionRow('pin', 'key', 'Alterar PIN', vault.linked ? 'Vale para todos os apps deste aparelho.' : 'Pede o PIN atual e o novo PIN.')
+      + actionRow('pin', 'key', vault.secretKind === 'password' ? 'Alterar senha' : 'Alterar PIN', vault.linked ? 'Vale para todos os apps deste aparelho.' : 'Pede o PIN atual e o novo PIN.')
+      + (!vault.linked ? '' : vault.secretKind === 'password'
+        ? actionRow('secret-kind', 'key', 'Voltar a usar PIN', 'Troca a senha por um PIN de 6 números em todos os apps.')
+        : actionRow('secret-kind', 'shield', 'Usar senha em vez de PIN', 'Mais forte: 10+ caracteres, pode ser uma frase. Vale para todos os apps.'))
       + row('fingerprint', 'Biometria', bioOn ? 'Ativada: digital, rosto ou bloqueio de tela.' : bioAvailable ? 'Desativada.' : 'Indisponível neste aparelho ou navegador.', toggle('bio', bioOn, !bioOn && !bioAvailable))
       + row('clock', 'Bloqueio automático', 'Sem uso por este tempo, o app bloqueia.', '<select class="fs-select" data-fs="autolock" aria-label="Bloqueio automático">' + FinancVault.AUTO_LOCK_MINUTES.map(m => '<option value="' + m + '"' + (m === cfg.autoLockMinutes ? ' selected' : '') + '>' + m + ' min</option>').join('') + '</select>')
       + row('eye-off', 'Bloquear ao sair do app', 'Bloqueia ao trocar de aba, minimizar ou apagar a tela.', toggle('hide', cfg.lockOnHide))
@@ -637,14 +652,26 @@
     el.disabled = true;
     try {
       if (kind === 'pin') {
+        const text = vault.secretKind === 'password';
         const changed = await withPin('Digite o PIN atual:', async current => {
           await vault.verifyPin(current);
-          const next = await window.askSecret('Crie o novo PIN de 6 números:', true);
+          const next = text ? await window.askSecret('Crie a nova senha (mínimo de ' + FinancVault.PASSPHRASE_MIN + ' caracteres; pode ser uma frase):', true, true, true)
+            : await window.askSecret('Crie o novo PIN de 6 números:', true);
           if (!next) return false;
-          if (next === current) throw new Error('O novo PIN precisa ser diferente do atual.');
+          if (next === current) throw new Error(text ? 'A nova senha precisa ser diferente da atual.' : 'O novo PIN precisa ser diferente do atual.');
           await vault.changePin(current, next); return true;
         });
-        if (changed) say('PIN alterado.');
+        if (changed) say(text ? 'Senha alterada em todos os apps.' : 'PIN alterado.');
+      } else if (kind === 'secret-kind') {
+        const toPin = vault.secretKind === 'password';
+        const changed = await withPin('Digite o PIN atual:', async current => {
+          await vault.verifyPin(current);
+          const next = toPin ? await window.askSecret('Crie o PIN de 6 números:', true)
+            : await window.askSecret('Crie a senha (mínimo de ' + FinancVault.PASSPHRASE_MIN + ' caracteres; pode ser uma frase fácil de lembrar):', true, true, true);
+          if (!next) return false;
+          await vault.changeSecretKind(current, next, toPin ? 'pin' : 'password'); return true;
+        });
+        if (changed) say(toPin ? 'Pronto: todos os apps voltam a abrir com PIN.' : 'Pronto: todos os apps passam a abrir com a senha.');
       } else if (kind === 'bio') {
         if (vault.biometric) {
           const { credentialId } = vault.biometric;
