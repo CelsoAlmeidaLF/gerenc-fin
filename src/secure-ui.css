@@ -174,9 +174,6 @@ html.vault-locked body { min-height:100vh; min-height:100dvh; display:grid; plac
 .vp-version { margin:10px 0 0; text-align:center; color:var(--ink-dim, #8fa098); opacity:.6; font:10.5px/1.4 'IBM Plex Mono', monospace; letter-spacing:.04em; }
 @media (prefers-reduced-motion: reduce) { .vp-drawer, .vp-drawer::backdrop, .vp-drawer.vp-closing { animation:none; } #vaultProfileBtn { transition:none; } }
 
-.vp-theme { display:flex; align-items:center; gap:12px; padding:8px; }
-.vp-theme .fs-seg { flex:1; }
-.vp-theme .fs-seg button { padding:7px 4px; font-size:11px; }
 [data-vault-profile-slot] { display:flex; flex:none; }
 /* Cabeçalho padrão dos apps FINANC: ⋮ à esquerda de eyebrow, título e descrição. */
 .app-head { display:flex; align-items:flex-start; gap:12px; margin:0 0 18px; }
