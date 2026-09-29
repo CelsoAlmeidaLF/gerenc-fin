@@ -239,7 +239,8 @@
         rp: { name: appName }, challenge: random(32),
         user: { id: random(16), name: appName + ' (' + appId + ')', displayName: appName },
         pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
-        authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'discouraged' },
+        // Android: o Chrome só entrega PRF para passkeys (credenciais residentes) do Gerenciador de Senhas do Google.
+        authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'required', requireResidentKey: true },
         timeout: 60000, extensions: { prf: { eval: { first: prfSalt } } },
       } });
       const prf = credential.getClientExtensionResults().prf;
