@@ -406,10 +406,13 @@
       <label>Vencimento<input type="date" id="dVenc" required></label>
       <label>Categoria<select id="dCat" data-cat></select></label>
       <label>Tipo<select id="dNat"><option value="variavel">Variável</option><option value="fixa">Fixa</option></select></label>
+      <label>Repetição<select id="dRep"><option value="">Não repetir</option><option value="mensal">Todo mês</option></select></label>
       <button type="submit" class="add">Lançar</button>
     </form>
     <div class="section-title">em aberto</div>
     <div class="list" id="listDespesasAbertas"></div>
+    <div class="section-title">recorrentes (despesas e entradas todo mês)</div>
+    <div class="list" id="listRecorrencias"></div>
     <div class="section-title">pagas</div>
     <div class="list" id="listDespesasPagas"></div>
   </section>
@@ -421,6 +424,7 @@
       <label class="wide">Descrição<input type="text" id="eDesc" required placeholder="ex: salário"></label>
       <label>Data<input type="date" id="eData" required></label>
       <label>Categoria<select id="eCat" data-cat data-default="Salário"></select></label>
+      <label>Repetição<select id="eRep"><option value="">Não repetir</option><option value="mensal">Todo mês</option></select></label>
       <label id="eContaLabel" hidden>Conta<select id="eConta"></select></label>
       <button type="submit" class="add">Lançar</button>
     </form>

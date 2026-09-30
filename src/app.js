@@ -446,6 +446,26 @@
     }).join('') : '<div class="empty">nenhum orçamento definido.</div>';
   }
 
+  function renderRecorrencias(){
+    document.getElementById('listRecorrencias').innerHTML = state.recorrencias.length ? state.recorrencias.map(function(r){
+      return rowHtml({ id: r.id, title: escapeHtml(r.descricao) + (r.ativa ? '' : ' <span class="tag due-soon">pausada</span>'),
+        meta: (r.tipo === 'entrada' ? 'entrada' : 'despesa') + ' · todo dia ' + r.dia + ' · ' + escapeHtml(r.categoria) + ' · desde ' + dateBR(r.inicio),
+        amt: fmt(r.valor), amtClass: r.tipo === 'entrada' ? 'pos' : 'neg', paid: !r.ativa,
+        actions: [{label: r.ativa ? 'pausar' : 'retomar', cls: '', action: 'toggle-rec'}, {label:'excluir', cls:'del', action:'del-rec'}] });
+    }).join('') : '<div class="empty">nenhum lançamento recorrente. Use "Repetição: todo mês" ao lançar.</div>';
+  }
+  function renderProjecao(){
+    var ps = Engine.projectionAll(state, hoje());
+    document.getElementById('projecao').innerHTML = '<div class="proj-grid">' + ps.map(function(p){
+      var neg = p.saldoProjetado < 0;
+      return '<div class="rec-box"><div class="t">próximos ' + p.dias + ' dias · até ' + dateBR(p.ate) + '</div>' +
+        '<div class="value num" style="font-size:1.1rem;font-weight:600;color:var(' + (neg ? '--rust' : '--green') + ')">' + fmt(p.saldoProjetado) + '</div>' +
+        '<div class="rec-result">' + (p.temConta ? 'saldo hoje ' + fmt(p.saldoInicial) : 'sem conta cadastrada: parte de R$ 0,00') + '<br>' +
+        '+ entradas esperadas ' + fmt(p.entradas) + '<br>− despesas em aberto ' + fmt(p.saidas.despesas) + '<br>− parcelas de dívidas ' + fmt(p.saidas.dividas) + '<br>− faturas previstas ' + fmt(p.saidas.cartao) +
+        (p.atrasadas ? '<br>(inclui ' + fmt(p.atrasadas) + ' em atraso)' : '') + '</div></div>';
+    }).join('') + '</div>';
+  }
+
   function renderAll(){
     renderDespesas();
     renderEntradas();
@@ -454,6 +474,8 @@
     renderConta();
     fillCategorySelects();
     renderRelatorio();
+    renderRecorrencias();
+    renderProjecao();
     renderSummary();
   }
 
@@ -477,6 +499,9 @@
     });
   });
 
+  // Depois de qualquer mudança: gera as ocorrências recorrentes que faltam, salva e redesenha.
+  function commit(){ Engine.materializeRecurrences(state, hoje()); save(); renderAll(); }
+
   // ---------- forms ----------
   // Lê um campo de valor (reais) e devolve centavos inteiros; 0 se vazio, inválido ou acima do teto (B5).
   function readAmount(id){ var c = Engine.parseCents(document.getElementById(id).value); return c > 0 && c <= Engine.MAX_CENTS ? c : 0; }
@@ -487,9 +512,11 @@
     var desc = document.getElementById('dDesc').value.trim();
     var venc = document.getElementById('dVenc').value;
     if (!(valor > 0) || !desc || !venc) return;
-    state.expenses.push(Engine.makeExpense({valor: valor, descricao: desc, vencimento: venc, categoria: document.getElementById('dCat').value, natureza: document.getElementById('dNat').value}));
+    var catD = document.getElementById('dCat').value, natD = document.getElementById('dNat').value;
+    if (document.getElementById('dRep').value === 'mensal') Engine.addRecurrence(state, {tipo: 'despesa', valor: valor, descricao: desc, inicio: venc, categoria: catD, natureza: natD});
+    else state.expenses.push(Engine.makeExpense({valor: valor, descricao: desc, vencimento: venc, categoria: catD, natureza: natD}));
     this.reset();
-    save(); renderAll();
+    commit();
   });
 
   document.getElementById('formEntrada').addEventListener('submit', function(e){
@@ -498,9 +525,11 @@
     var desc = document.getElementById('eDesc').value.trim();
     var data = document.getElementById('eData').value;
     if (!(valor > 0) || !desc || !data) return;
-    state.income.push(Engine.makeIncome({valor: valor, descricao: desc, data: data, categoria: document.getElementById('eCat').value, contaId: state.contas.length > 1 ? document.getElementById('eConta').value : ''}));
+    var catE = document.getElementById('eCat').value, contaE = state.contas.length > 1 ? document.getElementById('eConta').value : '';
+    if (document.getElementById('eRep').value === 'mensal') Engine.addRecurrence(state, {tipo: 'entrada', valor: valor, descricao: desc, inicio: data, categoria: catE, contaId: contaE});
+    else state.income.push(Engine.makeIncome({valor: valor, descricao: desc, data: data, categoria: catE, contaId: contaE}));
     this.reset();
-    save(); renderAll();
+    commit();
   });
 
   document.getElementById('formConta').addEventListener('submit', function(e){
@@ -510,7 +539,7 @@
     if (saldo === null || Math.abs(saldo) > Engine.MAX_CENTS || !nome || !data) return;
     Engine.addAccount(state, {nome: nome, saldoInicial: saldo, dataSaldoInicial: data});
     this.reset(); document.getElementById('kData').value = hoje();
-    save(); renderAll();
+    commit();
   });
 
   document.getElementById('conciliacao').addEventListener('submit', function(e){
@@ -519,7 +548,7 @@
     var contaId = form.closest('.rec-box').dataset.conta, banco = Engine.parseCents(form.elements.banco.value);
     if (banco === null || Math.abs(banco) > Engine.MAX_CENTS) return;
     state.reconciliacao[contaId] = {saldoBanco: banco, data: hoje()};
-    save(); renderAll();
+    commit();
   });
 
   document.getElementById('formOrcamento').addEventListener('submit', function(e){
@@ -527,13 +556,13 @@
     var cents = Engine.parseCents(document.getElementById('oValor').value);
     var r = Engine.setBudget(state, document.getElementById('oCat').value, cents === null ? -1 : cents);
     if (!r.ok) { showMessage('Orçamento inválido', r.erro); return; }
-    this.reset(); save(); renderAll();
+    this.reset(); commit();
   });
   document.getElementById('rMes').addEventListener('input', renderRelatorio);
   document.getElementById('listOrcamentos').addEventListener('click', function(e){
     var b = e.target.closest('[data-action="del-orcamento"]'); if (!b) return;
     e.stopPropagation();
-    Engine.setBudget(state, b.closest('[data-cat]').dataset.cat, 0); save(); renderAll();
+    Engine.setBudget(state, b.closest('[data-cat]').dataset.cat, 0); commit();
   });
 
   document.getElementById('formConfigCartao').addEventListener('submit', function(e){
@@ -544,7 +573,7 @@
     state.card.limite = limite;
     state.card.fechamento = fechamento;
     state.card.vencimentoDia = venc;
-    save(); renderAll();
+    commit();
   });
 
   document.getElementById('formCartao').addEventListener('submit', function(e){
@@ -558,7 +587,7 @@
     Engine.addCardPurchase(state, {valor: valor, descricao: desc, data: data, tipo: tipo, parcelas: parcelas, categoria: document.getElementById('ccCat').value});
     this.reset();
     document.getElementById('ccData').value = hoje();
-    save(); renderAll();
+    commit();
   });
 
   document.getElementById('formDivida').addEventListener('submit', function(e){
@@ -576,7 +605,7 @@
     this.reset();
     document.getElementById('vParcelas').value = 1;
     document.getElementById('vVenc').value = hoje();
-    save(); renderAll();
+    commit();
   });
 
   // ---------- row actions (event delegation) ----------
@@ -620,7 +649,7 @@
     } else if (action === 'close-invoice') {
       r = Engine.closeInvoice(state, id, hoje());
       if (!r.ok) { await showMessage('Não foi possível fechar', r.erro); return; }
-      save(); renderAll();
+      commit();
       if (r.despesa) document.querySelector('nav.tabs button[data-tab="despesas"]').click();
       else await showMessage('Fatura sem valor a pagar', 'Os créditos cobriram as compras do ciclo. A sobra abate a próxima fatura.', false);
       return;
@@ -648,12 +677,18 @@
     } else if (action === 'del-conta') {
       if (!await askConfirm({title: 'Excluir esta conta?', text: 'Os lançamentos continuam existindo e passam a valer para a primeira conta.', action: 'Excluir', danger: true})) return;
       Engine.removeAccount(state, id);
+    } else if (action === 'toggle-rec') {
+      var rc = state.recorrencias.find(function(x){return x.id===id;});
+      if (rc) Engine.setRecurrenceActive(state, id, !rc.ativa);
+    } else if (action === 'del-rec') {
+      if (!await askConfirm({title: 'Excluir esta recorrência?', text: 'As ocorrências futuras ainda não pagas serão removidas. O que já passou continua no histórico.', action: 'Excluir', danger: true})) return;
+      Engine.removeRecurrence(state, id, hoje());
     } else if (action === 'del-debt') {
       if (!await askConfirm({title: 'Excluir esta dívida?', text: 'As despesas já geradas por parcelas pagas continuam em Despesas.', action: 'Excluir', danger: true})) return;
       state.debts = state.debts.filter(function(x){return x.id!==id;});
       state.expenses.forEach(function(x){ if (x.origem && x.origem.tipo === 'divida' && x.origem.id === id) x.origem = null; });
     }
-    save(); renderAll();
+    commit();
   });
 
   // ---------- export / import / reset ----------
@@ -685,7 +720,7 @@
           throw new Error('backup não criptografado');
         }
         if (!await askConfirm({title: 'Substituir todos os dados?', text: 'Importar este arquivo vai substituir todos os dados atuais.', action: 'Importar', danger: true})) return;
-        normalizeState(data); await save(); renderAll();
+        normalizeState(data); await commit();
         document.getElementById('saveStatus').textContent='backup importado e salvo criptografado'+(oldFormat?'. Este backup usa a proteção antiga: exporte um novo para ficar com a proteção atual.':'');
       } catch(err) { showMessage('Backup inválido', 'Backup inválido, senha incorreta ou arquivo não criptografado.'); }
     };
@@ -729,5 +764,11 @@
   });
 
   document.getElementById('rMes').value = Engine.monthKey(hoje());
-  try { await load(); renderAll(); } catch (error) { document.getElementById('gateStatus').textContent = error.message || 'Falha na migração. Os dados anteriores foram preservados.'; }
+  try { await load(); if (Engine.materializeRecurrences(state, hoje())) await save(); renderAll(); } catch (error) { document.getElementById('gateStatus').textContent = error.message || 'Falha na migração. Os dados anteriores foram preservados.'; }
+  // M7: se o app ficou aberto de um dia para o outro, recalcula tudo ao voltar para a tela.
+  document.addEventListener('visibilitychange', function(){
+    if (document.visibilityState !== 'visible' || document.body.classList.contains('locked')) return;
+    document.getElementById('dataHoje').textContent = new Date().toLocaleDateString('pt-BR', {day:'2-digit', month:'long', year:'numeric'});
+    commit();
+  });
 })().catch(() => window.lockVault());
