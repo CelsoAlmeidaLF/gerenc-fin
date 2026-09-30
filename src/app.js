@@ -13,40 +13,16 @@
   // Data local recalculada a cada uso (C1, M7): nunca congelada na abertura e nunca em UTC.
   function hoje(){ return Engine.hojeISO(); }
 
-  var state = {
-    expenses: [],   // {id, valor, descricao, vencimento, pago, dataPagamento}
-    income: [],     // {id, valor, descricao, data}
-    card: { limite: 0, fechamento: 1, lancamentos: [], faturas: [] }, // lancamentos:{id,valor,descricao,data}; faturas:{id,total,dataFechamento,despesaId}
-    debts: []       // {id, valorParcela, descricao, parcelas, parcelaAtual, vencimento, pago}
-  };
+  var state = Engine.freshState();
 
-  function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
-
-  function fmt(v){
-    v = Number(v)||0;
-    return v.toLocaleString('pt-BR', {style:'currency', currency:'BRL'});
-  }
+  function uid(){ return Engine.uid(); }
+  // Todos os valores do estado são centavos inteiros; só formatamos na exibição (A6).
+  function fmt(cents){ return Engine.fmtBRL(cents); }
 
   function b64(bytes){ var s=''; for(var i=0;i<bytes.length;i++) s+=String.fromCharCode(bytes[i]); return btoa(s); }
   function fromB64(s){ var raw=atob(s), out=new Uint8Array(raw.length); for(var i=0;i<raw.length;i++) out[i]=raw.charCodeAt(i); return out; }
-  function freshState(){ return { expenses: [], income: [], card: { limite:0, fechamento:1, lancamentos:[], faturas:[] }, debts: [] }; }
-  function safeId(value){ return String(value || uid()).replace(/[^a-zA-Z0-9_-]/g, '').slice(0,80) || uid(); }
-  function safeText(value){ return String(value || '').replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0,200); }
-  function safeAmount(value){ var n=Number(value); return Number.isFinite(n) && n >= 0 && n <= 1e15 ? n : 0; }
-  function safeDate(value){ var text=String(value || ''); return /^\d{4}-\d{2}-\d{2}$/.test(text) && !Number.isNaN(Date.parse(text+'T00:00:00')) ? text : ''; }
-  function normalizeState(parsed){
-    var source=parsed && typeof parsed==='object' && !Array.isArray(parsed) ? parsed : {};
-    var card=source.card && typeof source.card==='object' ? source.card : {};
-    var list=function(value){ return Array.isArray(value) ? value.slice(0,10000) : []; };
-    state=freshState();
-    state.expenses=list(source.expenses).map(function(x){ return {id:safeId(x.id),valor:safeAmount(x.valor),descricao:safeText(x.descricao),vencimento:safeDate(x.vencimento),pago:x.pago===true,dataPagamento:safeDate(x.dataPagamento)||null}; }).filter(function(x){return x.descricao&&x.vencimento;});
-    state.income=list(source.income).map(function(x){ return {id:safeId(x.id),valor:safeAmount(x.valor),descricao:safeText(x.descricao),data:safeDate(x.data)}; }).filter(function(x){return x.descricao&&x.data;});
-    state.card.limite=safeAmount(card.limite);
-    state.card.fechamento=Math.min(31,Math.max(1,Math.trunc(Number(card.fechamento)||1)));
-    state.card.lancamentos=list(card.lancamentos).map(function(x){ return {id:safeId(x.id),valor:safeAmount(x.valor),descricao:safeText(x.descricao),data:safeDate(x.data)}; }).filter(function(x){return x.descricao&&x.data;});
-    state.card.faturas=list(card.faturas).map(function(x){ return {id:safeId(x.id),total:safeAmount(x.total),dataFechamento:safeDate(x.dataFechamento),despesaId:safeId(x.despesaId)}; }).filter(function(x){return x.dataFechamento;});
-    state.debts=list(source.debts).map(function(x){ var parcelas=Math.min(1200,Math.max(1,Math.trunc(Number(x.parcelas)||1))); return {id:safeId(x.id),valorParcela:safeAmount(x.valorParcela),descricao:safeText(x.descricao),parcelas:parcelas,parcelaAtual:Math.min(parcelas,Math.max(1,Math.trunc(Number(x.parcelaAtual)||1))),vencimento:safeDate(x.vencimento),pago:x.pago===true}; }).filter(function(x){return x.descricao&&x.vencimento;});
-  }
+  function freshState(){ return Engine.freshState(); }
+  function normalizeState(parsed){ state = Engine.normalizeState(parsed); }
   // Com o PIN FINANC, o certificado é o FINANC (um só para todos os apps; o kit já trouxe o antigo deste app).
   // Sem ele (app ainda com PIN próprio), segue o certificado próprio guardado no cofre do app.
   var FinancCert = window.FinancCert;
@@ -214,7 +190,7 @@
   }
 
   function renderCartao(){
-    document.getElementById('cLimite').value = state.card.limite || '';
+    document.getElementById('cLimite').value = state.card.limite ? Engine.centsToInput(state.card.limite) : '';
     document.getElementById('cFechamento').value = state.card.fechamento || '';
 
     var usado = cardUsedTotal();
@@ -343,12 +319,15 @@
   });
 
   // ---------- forms ----------
+  // Lê um campo de valor (reais) e devolve centavos inteiros; 0 se vazio, inválido ou acima do teto (B5).
+  function readAmount(id){ var c = Engine.parseCents(document.getElementById(id).value); return c > 0 && c <= Engine.MAX_CENTS ? c : 0; }
+
   document.getElementById('formDespesa').addEventListener('submit', function(e){
     e.preventDefault();
-    var valor = parseFloat(document.getElementById('dValor').value);
+    var valor = readAmount('dValor');
     var desc = document.getElementById('dDesc').value.trim();
     var venc = document.getElementById('dVenc').value;
-    if (!valor || !desc || !venc) return;
+    if (!(valor > 0) || !desc || !venc) return;
     state.expenses.push({id: uid(), valor: valor, descricao: desc, vencimento: venc, pago: false, dataPagamento: null});
     this.reset();
     save(); renderAll();
@@ -356,10 +335,10 @@
 
   document.getElementById('formEntrada').addEventListener('submit', function(e){
     e.preventDefault();
-    var valor = parseFloat(document.getElementById('eValor').value);
+    var valor = readAmount('eValor');
     var desc = document.getElementById('eDesc').value.trim();
     var data = document.getElementById('eData').value;
-    if (!valor || !desc || !data) return;
+    if (!(valor > 0) || !desc || !data) return;
     state.income.push({id: uid(), valor: valor, descricao: desc, data: data});
     this.reset();
     save(); renderAll();
@@ -367,7 +346,7 @@
 
   document.getElementById('formConfigCartao').addEventListener('submit', function(e){
     e.preventDefault();
-    var limite = parseFloat(document.getElementById('cLimite').value) || 0;
+    var limite = readAmount('cLimite');
     var fechamento = parseInt(document.getElementById('cFechamento').value) || 1;
     state.card.limite = limite;
     state.card.fechamento = Math.min(31, Math.max(1, fechamento));
@@ -376,10 +355,10 @@
 
   document.getElementById('formCartao').addEventListener('submit', function(e){
     e.preventDefault();
-    var valor = parseFloat(document.getElementById('ccValor').value);
+    var valor = readAmount('ccValor');
     var desc = document.getElementById('ccDesc').value.trim();
     var data = document.getElementById('ccData').value;
-    if (!valor || !desc || !data) return;
+    if (!(valor > 0) || !desc || !data) return;
     state.card.lancamentos.push({id: uid(), valor: valor, descricao: desc, data: data});
     this.reset();
     save(); renderAll();
@@ -387,11 +366,11 @@
 
   document.getElementById('formDivida').addEventListener('submit', function(e){
     e.preventDefault();
-    var valorParcela = parseFloat(document.getElementById('vValor').value);
+    var valorParcela = readAmount('vValor');
     var desc = document.getElementById('vDesc').value.trim();
     var parcelas = parseInt(document.getElementById('vParcelas').value) || 1;
     var venc = document.getElementById('vVenc').value;
-    if (!valorParcela || !desc || !venc) return;
+    if (!(valorParcela > 0) || !desc || !venc) return;
     state.debts.push({id: uid(), valorParcela: valorParcela, descricao: desc, parcelas: parcelas, parcelaAtual: 1, vencimento: venc, pago: false});
     this.reset();
     document.getElementById('vParcelas').value = 1;

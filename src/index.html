@@ -364,7 +364,7 @@
   <!-- DESPESAS -->
   <section class="panel active" id="panel-despesas">
     <form class="entry f-expense" id="formDespesa">
-      <label>Valor (R$)<input type="number" step="0.01" min="0" id="dValor" required></label>
+      <label>Valor (R$)<input type="number" step="0.01" min="0" max="999999999.99" id="dValor" required></label>
       <label>Descrição<input type="text" id="dDesc" required placeholder="ex: aluguel"></label>
       <label>Vencimento<input type="date" id="dVenc" required></label>
       <button type="submit" class="add">Lançar</button>
@@ -378,7 +378,7 @@
   <!-- ENTRADAS -->
   <section class="panel" id="panel-entradas">
     <form class="entry f-income" id="formEntrada">
-      <label>Valor (R$)<input type="number" step="0.01" min="0" id="eValor" required></label>
+      <label>Valor (R$)<input type="number" step="0.01" min="0" max="999999999.99" id="eValor" required></label>
       <label>Descrição<input type="text" id="eDesc" required placeholder="ex: salário"></label>
       <label>Data<input type="date" id="eData" required></label>
       <button type="submit" class="add">Lançar</button>
@@ -390,7 +390,7 @@
   <!-- CARTAO -->
   <section class="panel" id="panel-cartao">
     <form class="entry f-config" id="formConfigCartao">
-      <label>Limite total (R$)<input type="number" step="0.01" min="0" id="cLimite"></label>
+      <label>Limite total (R$)<input type="number" step="0.01" min="0" max="999999999.99" id="cLimite"></label>
       <label>Dia de fechamento<input type="number" min="1" max="31" id="cFechamento"></label>
       <button type="submit" class="add">Salvar</button>
     </form>
@@ -403,7 +403,7 @@
 
     <div class="section-title">lançamentos do ciclo atual</div>
     <form class="entry f-card" id="formCartao">
-      <label>Valor (R$)<input type="number" step="0.01" min="0" id="ccValor" required></label>
+      <label>Valor (R$)<input type="number" step="0.01" min="0" max="999999999.99" id="ccValor" required></label>
       <label>Descrição<input type="text" id="ccDesc" required placeholder="ex: mercado"></label>
       <label>Data<input type="date" id="ccData" required></label>
       <button type="submit" class="add">Lançar</button>
@@ -418,7 +418,7 @@
   <!-- DIVIDAS -->
   <section class="panel" id="panel-dividas">
     <form class="entry f-debt" id="formDivida">
-      <label>Valor parcela (R$)<input type="number" step="0.01" min="0" id="vValor" required></label>
+      <label>Valor parcela (R$)<input type="number" step="0.01" min="0" max="999999999.99" id="vValor" required></label>
       <label>Descrição<input type="text" id="vDesc" required placeholder="ex: empréstimo consignado"></label>
       <label>Parcelas<input type="number" min="1" id="vParcelas" value="1" required></label>
       <label>1º vencimento<input type="date" id="vVenc" required></label>
