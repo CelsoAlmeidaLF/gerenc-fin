@@ -254,18 +254,16 @@
     }).join('') : '<div class="empty">nenhuma entrada lançada.</div>';
   }
 
-  function cardUsedTotal(){
-    return state.card.lancamentos.reduce(function(s,x){return s + Number(x.valor);}, 0);
-  }
-
   function renderCartao(){
-    document.getElementById('cLimite').value = state.card.limite ? Engine.centsToInput(state.card.limite) : '';
-    document.getElementById('cFechamento').value = state.card.fechamento || '';
+    var c = state.card;
+    document.getElementById('cLimite').value = c.limite ? Engine.centsToInput(c.limite) : '';
+    document.getElementById('cFechamento').value = c.fechamento || '';
+    document.getElementById('cVencimento').value = c.vencimentoDia || '';
 
-    var usado = cardUsedTotal();
-    var limite = Number(state.card.limite)||0;
+    var usado = Engine.cardUsed(state);
+    var limite = c.limite;
     var pct = limite > 0 ? Math.min(100, (usado/limite)*100) : 0;
-    var disponivel = Math.max(0, limite - usado);
+    var disponivel = Engine.cardAvailable(state);
 
     document.getElementById('cartaoUsadoLabel').textContent = fmt(usado);
     document.getElementById('cartaoLimiteLabel').textContent = fmt(limite);
@@ -278,33 +276,50 @@
     else if (pct >= 70) bar.classList.add('warn');
 
     document.getElementById('cartaoConfigInfo').innerHTML =
-      'fechamento todo dia <b>' + (state.card.fechamento||'-') + '</b> &nbsp;·&nbsp; disponível <b>' + fmt(disponivel) + '</b>';
+      'fecha todo dia <b>' + (c.fechamento||'-') + '</b> &nbsp;·&nbsp; vence dia <b>' + (c.vencimentoDia||'-') + '</b> &nbsp;·&nbsp; disponível <b>' + fmt(disponivel) + '</b>' +
+      '<span>em aberto <b>' + fmt(Math.max(0, Engine.cardOpenTotal(state))) + '</b> &nbsp;·&nbsp; faturas a pagar <b>' + fmt(Engine.cardInvoicesUnpaid(state)) + '</b></span>';
 
-    var abertos = state.card.lancamentos.slice().sort(function(a,b){return b.data.localeCompare(a.data);});
-    document.getElementById('listCartaoAberto').innerHTML = abertos.length ? abertos.map(function(x){
-      return rowHtml({
-        id: x.id,
-        title: escapeHtml(x.descricao),
-        meta: dateBR(x.data),
-        amt: fmt(x.valor),
+    var h = hoje();
+    var ciclos = Engine.openCycles(state);
+    document.getElementById('listCartaoAberto').innerHTML = ciclos.length ? ciclos.map(function(cy){
+      var podeFechar = cy.fechamento <= h;
+      var head = rowHtml({
+        id: cy.fechamento,
+        title: (podeFechar ? 'fatura fechada em ' : 'fatura que fecha em ') + dateBR(cy.fechamento),
+        meta: 'vence em ' + dateBR(cy.vencimento) + ' · ' + cy.itens.length + ' lançamento(s)' + (podeFechar ? '' : ' · ainda aberta'),
+        amt: fmt(Math.max(0, cy.total)),
         amtClass: 'neg',
         paid: false,
-        actions: [{label:'excluir', cls:'del', action:'del-card-item'}]
-      });
-    }).join('') : '<div class="empty">nenhum lançamento no ciclo atual.</div>';
+        actions: podeFechar ? [{label:'gerar despesa da fatura', cls:'pay', action:'close-invoice'}] : []
+      }).replace('class="row"', 'class="row cycle"');
+      var itens = cy.itens.slice().sort(function(a,b){return b.data.localeCompare(a.data);}).map(function(x){
+        var cred = x.tipo === 'credito';
+        return rowHtml({
+          id: x.id,
+          title: escapeHtml(x.descricao) + (x.parcelas > 1 ? ' · parcela ' + x.parcelaAtual + '/' + x.parcelas : '') + (cred ? ' <span class="tag paid">crédito</span>' : ''),
+          meta: dateBR(x.data),
+          amt: (cred ? '− ' : '') + fmt(x.valor),
+          amtClass: cred ? 'pos' : 'neg',
+          paid: false,
+          actions: [{label:'excluir', cls:'del', action:'del-card-item'}]
+        }).replace('class="row"', 'class="row item"');
+      }).join('');
+      return head + itens;
+    }).join('') : '<div class="empty">nenhum lançamento em aberto no cartão.</div>';
 
-    var faturas = state.card.faturas.slice().sort(function(a,b){return b.dataFechamento.localeCompare(a.dataFechamento);});
+    var faturas = c.faturas.slice().sort(function(a,b){return b.dataFechamento.localeCompare(a.dataFechamento);});
     document.getElementById('listFaturas').innerHTML = faturas.length ? faturas.map(function(f){
-      var despesa = state.expenses.find(function(e){return e.id === f.despesaId;});
-      var pago = despesa ? despesa.pago : false;
+      var despesa = Engine.faturaDespesa(state, f);
+      var pago = despesa ? despesa.pago : true;
+      var acts = despesa && !despesa.pago ? [{label:'reabrir', cls:'', action:'reopen-invoice'}] : [];
       return rowHtml({
         id: f.id,
-        title: 'fatura fechada em ' + dateBR(f.dataFechamento) + (pago ? ' <span class="tag paid">paga</span>' : ' <span class="tag due-soon">a pagar</span>'),
+        title: 'fatura fechada em ' + dateBR(f.dataFechamento) + (!despesa ? ' <span class="tag paid">sem valor a pagar</span>' : pago ? ' <span class="tag paid">paga</span>' : ' <span class="tag due-soon">a pagar</span>'),
         meta: despesa ? ('lançada em Despesas · vence ' + dateBR(despesa.vencimento)) : 'sem despesa vinculada',
         amt: fmt(f.total),
         amtClass: pago ? '' : 'neg',
         paid: pago,
-        actions: []
+        actions: acts
       });
     }).join('') : '<div class="empty">nenhuma fatura fechada ainda.</div>';
   }
@@ -420,9 +435,11 @@
   document.getElementById('formConfigCartao').addEventListener('submit', function(e){
     e.preventDefault();
     var limite = readAmount('cLimite');
-    var fechamento = parseInt(document.getElementById('cFechamento').value) || 1;
+    var fechamento = Math.min(31, Math.max(1, parseInt(document.getElementById('cFechamento').value) || 1));
+    var venc = Math.min(31, Math.max(1, parseInt(document.getElementById('cVencimento').value) || Engine.defaultVencimentoDia(fechamento)));
     state.card.limite = limite;
-    state.card.fechamento = Math.min(31, Math.max(1, fechamento));
+    state.card.fechamento = fechamento;
+    state.card.vencimentoDia = venc;
     save(); renderAll();
   });
 
@@ -432,8 +449,11 @@
     var desc = document.getElementById('ccDesc').value.trim();
     var data = document.getElementById('ccData').value;
     if (!(valor > 0) || !desc || !data) return;
-    state.card.lancamentos.push({id: uid(), valor: valor, descricao: desc, data: data});
+    var tipo = document.getElementById('ccTipo').value;
+    var parcelas = Math.min(48, Math.max(1, parseInt(document.getElementById('ccParcelas').value) || 1));
+    Engine.addCardPurchase(state, {valor: valor, descricao: desc, data: data, tipo: tipo, parcelas: parcelas});
     this.reset();
+    document.getElementById('ccData').value = hoje();
     save(); renderAll();
   });
 
@@ -453,20 +473,6 @@
     document.getElementById('vParcelas').value = 1;
     document.getElementById('vVenc').value = hoje();
     save(); renderAll();
-  });
-
-  document.getElementById('btnFecharFatura').addEventListener('click', function(){
-    if (!state.card.lancamentos.length) { showMessage('Nada para fechar', 'Não há lançamentos no ciclo atual para fechar.', false); return; }
-    var total = cardUsedTotal();
-    var faturaId = uid();
-    var hojeStr = hoje();
-    var vencISO = Engine.addDays(hojeStr, 10);
-    var despesaId = uid();
-    state.expenses.push(Engine.makeExpense({id: despesaId, valor: total, descricao: 'Fatura do cartão (' + dateBR(hojeStr) + ')', vencimento: vencISO, origem: {tipo:'fatura', id: faturaId, parcela: 0}}));
-    state.card.faturas.push({id: faturaId, total: total, dataFechamento: hojeStr, despesaId: despesaId});
-    state.card.lancamentos = [];
-    save(); renderAll();
-    document.querySelector('nav.tabs button[data-tab="despesas"]').click();
   });
 
   // ---------- row actions (event delegation) ----------
@@ -501,8 +507,22 @@
       if (!await askConfirm({title: 'Excluir esta entrada?', text: 'Esta ação não pode ser desfeita.', action: 'Excluir', danger: true})) return;
       state.income = state.income.filter(function(x){return x.id!==id;});
     } else if (action === 'del-card-item') {
-      if (!await askConfirm({title: 'Excluir este lançamento do cartão?', text: 'Esta ação não pode ser desfeita.', action: 'Excluir', danger: true})) return;
-      state.card.lancamentos = state.card.lancamentos.filter(function(x){return x.id!==id;});
+      var item = state.card.lancamentos.find(function(x){return x.id===id;});
+      if (!item) return;
+      var restantes = item.compraId ? state.card.lancamentos.filter(function(x){return x.compraId===item.compraId;}).length : 1;
+      if (!await askConfirm({title: restantes > 1 ? 'Excluir a compra parcelada?' : 'Excluir este lançamento do cartão?', text: restantes > 1 ? 'Serão removidas as ' + restantes + ' parcelas ainda em aberto desta compra.' : 'Esta ação não pode ser desfeita.', action: 'Excluir', danger: true})) return;
+      Engine.deleteCardItem(state, id);
+    } else if (action === 'close-invoice') {
+      r = Engine.closeInvoice(state, id, hoje());
+      if (!r.ok) { await showMessage('Não foi possível fechar', r.erro); return; }
+      save(); renderAll();
+      if (r.despesa) document.querySelector('nav.tabs button[data-tab="despesas"]').click();
+      else await showMessage('Fatura sem valor a pagar', 'Os créditos cobriram as compras do ciclo. A sobra abate a próxima fatura.', false);
+      return;
+    } else if (action === 'reopen-invoice') {
+      if (!await askConfirm({title: 'Reabrir esta fatura?', text: 'Os lançamentos voltam para o cartão e a despesa da fatura é removida de Despesas.', action: 'Reabrir', danger: true})) return;
+      r = Engine.reopenInvoice(state, id);
+      if (!r.ok) { await showMessage('Não foi possível reabrir', r.erro); return; }
     } else if (action === 'pay-debt') {
       var d = Engine.findDebt(state, id);
       if (!d) return;

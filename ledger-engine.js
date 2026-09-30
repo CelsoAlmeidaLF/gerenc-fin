@@ -336,6 +336,102 @@
     return { ok: true, parcela: ultima.parcela };
   }
 
+  // ---------- cartão de crédito: ciclos, faturas, parcelas e limite (C3, A3, A4, B1, B4) ----------
+  function dateBR(iso) { if (!iso) return ''; var p = String(iso).split('-'); return p[2] + '/' + p[1] + '/' + p[0]; }
+  /** Valor com sinal: compra soma, crédito/estorno subtrai (B1). */
+  function signedValor(l) { return l.tipo === 'credito' ? -l.valor : l.valor; }
+  /** Data de fechamento do ciclo que contém `iso`. Compras até o dia do fechamento (inclusive) entram na fatura que fecha nele.
+   *  Em meses curtos o fechamento vai para o último dia do mês (B4). */
+  function closingDateFor(iso, fechamentoDia) {
+    var p = parseISO(iso), fecha = Math.min(fechamentoDia, lastDayOfMonth(p.y, p.m));
+    if (p.d <= fecha) return makeISO(p.y, p.m, fecha);
+    return addMonths(makeISO(p.y, p.m, 1), 1, fechamentoDia);
+  }
+  /** Vencimento da fatura que fecha em `closingISO`: primeiro `vencimentoDia` depois do fechamento (limitado ao fim do mês). */
+  function dueDateFor(closingISO, vencimentoDia) {
+    var p = parseISO(closingISO), mesmo = addMonths(makeISO(p.y, p.m, 1), 0, vencimentoDia);
+    return mesmo > closingISO ? mesmo : addMonths(makeISO(p.y, p.m, 1), 1, vencimentoDia);
+  }
+  /** Ciclos com lançamentos ainda não fechados, em ordem cronológica: [{fechamento, vencimento, itens, total}] (total líquido de créditos). */
+  function openCycles(state) {
+    var map = {}, card = state.card;
+    card.lancamentos.forEach(function (l) {
+      var f = closingDateFor(l.data, card.fechamento);
+      (map[f] = map[f] || { fechamento: f, vencimento: dueDateFor(f, card.vencimentoDia), itens: [], total: 0 });
+      map[f].itens.push(l); map[f].total += signedValor(l);
+    });
+    return Object.keys(map).sort().map(function (k) { return map[k]; });
+  }
+  function faturaDespesa(state, f) { return f.despesaId ? findExpense(state, f.despesaId) : undefined; }
+  /** Fatura ainda pesa no limite? Sim, enquanto a despesa vinculada não foi paga. Sem vínculo (dado legado) conta como quitada. */
+  function faturaEmAberto(state, f) { var d = faturaDespesa(state, f); return !!d && !d.pago; }
+  function cardOpenTotal(state) { return sum(state.card.lancamentos, signedValor); }
+  function cardInvoicesUnpaid(state) { return sum(state.card.faturas.filter(function (f) { return faturaEmAberto(state, f); }), function (f) { return f.total; }); }
+  /** Limite usado = lançamentos em aberto (inclui parcelas futuras) + faturas fechadas ainda não pagas (C3, A4). */
+  function cardUsed(state) { return Math.max(0, cardOpenTotal(state) + cardInvoicesUnpaid(state)); }
+  function cardAvailable(state) { return Math.max(0, state.card.limite - cardUsed(state)); }
+
+  /** Divide o total em n parcelas em centavos; o resto da divisão fica na primeira parcela. */
+  function splitInstallments(total, n) {
+    var base = Math.floor(total / n), resto = total - base * n, out = [];
+    for (var i = 0; i < n; i++) out.push(base + (i === 0 ? resto : 0));
+    return out;
+  }
+  /** Lança compra (ou crédito) no cartão. Compra parcelada gera uma linha por parcela, cada uma na data do mês
+   *  correspondente, para cair nas faturas seguintes (A4). Retorna as linhas criadas. */
+  function addCardPurchase(state, o) {
+    var tipo = o.tipo === 'credito' ? 'credito' : 'compra';
+    var n = tipo === 'credito' ? 1 : safeInt(o.parcelas, 1, 120, 1);
+    var valores = splitInstallments(o.valor, n), dia = parseISO(o.data).d, compraId = n > 1 ? uid() : '', criadas = [];
+    for (var i = 0; i < n; i++) {
+      criadas.push({ id: uid(), valor: valores[i], descricao: o.descricao, data: i === 0 ? o.data : addMonths(o.data, i, dia), categoria: o.categoria || 'Outros', tipo: tipo, parcelas: n, parcelaAtual: i + 1, compraId: compraId, transporteDe: '' });
+    }
+    Array.prototype.push.apply(state.card.lancamentos, criadas);
+    return criadas;
+  }
+  /** Fecha a fatura do ciclo `fechamentoISO` (só depois da data de fechamento). Leva junto ciclos anteriores ainda abertos.
+   *  Gera a despesa vinculada com o vencimento calculado a partir do dia de vencimento (A3). */
+  function closeInvoice(state, fechamentoISO, hoje) {
+    var ciclos = openCycles(state), alvo = ciclos.find(function (c) { return c.fechamento === fechamentoISO; });
+    if (!alvo) return { ok: false, erro: 'Ciclo não encontrado.' };
+    if (alvo.fechamento > hoje) return { ok: false, erro: 'Este ciclo só fecha em ' + dateBR(alvo.fechamento) + '.' };
+    var incluidos = ciclos.filter(function (c) { return c.fechamento <= alvo.fechamento; }), itens = [];
+    incluidos.forEach(function (c) { Array.prototype.push.apply(itens, c.itens); });
+    var liquido = sum(itens, signedValor), faturaId = uid(), despesa = null;
+    var fatura = { id: faturaId, total: Math.max(0, liquido), dataFechamento: alvo.fechamento, vencimento: alvo.vencimento, despesaId: '', itens: itens };
+    if (liquido > 0) {
+      despesa = makeExpense({ valor: liquido, descricao: 'Fatura do cartão (fechamento ' + dateBR(alvo.fechamento) + ')', vencimento: alvo.vencimento, categoria: 'Cartão', origem: { tipo: 'fatura', id: faturaId, parcela: 0 } });
+      state.expenses.push(despesa); fatura.despesaId = despesa.id;
+    }
+    var ids = {}; itens.forEach(function (l) { ids[l.id] = true; });
+    state.card.lancamentos = state.card.lancamentos.filter(function (l) { return !ids[l.id]; });
+    if (liquido < 0) {                                // crédito maior que as compras: sobra abate a próxima fatura
+      state.card.lancamentos.push({ id: uid(), valor: -liquido, descricao: 'Crédito da fatura de ' + dateBR(alvo.fechamento), data: addDays(alvo.fechamento, 1), categoria: 'Cartão', tipo: 'credito', parcelas: 1, parcelaAtual: 1, compraId: '', transporteDe: faturaId });
+    }
+    state.card.faturas.push(fatura);
+    return { ok: true, fatura: fatura, despesa: despesa };
+  }
+  /** Exclui um lançamento do cartão; se for parcela de compra parcelada, remove todas as parcelas ainda em aberto da compra. */
+  function deleteCardItem(state, id) {
+    var l = state.card.lancamentos.find(function (x) { return x.id === id; });
+    if (!l) return { ok: false, erro: 'Lançamento não encontrado.' };
+    var antes = state.card.lancamentos.length;
+    state.card.lancamentos = state.card.lancamentos.filter(function (x) { return l.compraId ? x.compraId !== l.compraId : x.id !== id; });
+    return { ok: true, removidos: antes - state.card.lancamentos.length };
+  }
+  /** Reabre uma fatura ainda não paga: devolve os lançamentos ao cartão e remove a despesa vinculada (M8). */
+  function reopenInvoice(state, faturaId) {
+    var f = state.card.faturas.find(function (x) { return x.id === faturaId; });
+    if (!f) return { ok: false, erro: 'Fatura não encontrada.' };
+    var d = faturaDespesa(state, f);
+    if (d && d.pago) return { ok: false, erro: 'Esta fatura já foi paga. Estorne o pagamento em Despesas antes de reabri-la.' };
+    state.card.lancamentos = state.card.lancamentos.filter(function (l) { return l.transporteDe !== f.id; });
+    Array.prototype.push.apply(state.card.lancamentos, f.itens);
+    if (d) state.expenses = state.expenses.filter(function (e) { return e.id !== d.id; });
+    state.card.faturas = state.card.faturas.filter(function (x) { return x.id !== f.id; });
+    return { ok: true, devolvidos: f.itens.length };
+  }
+
   // ---------- resumo do mês: caixa x competência (A1) ----------
   /** Resumo de um mês. `caixa` = o que de fato entrou/saiu (data de pagamento); `previsto` = vencimentos do mês
    *  (competência); `atrasoAnterior` = em aberto de meses anteriores. Todos em centavos. */
@@ -348,7 +444,7 @@
     var despesasPrev = sum(state.expenses.filter(function (x) { return monthKey(x.vencimento) === mk; }), function (x) { return x.valor; });
     var dividasPrev = 0;
     state.debts.forEach(function (d) { debtInstallments(d).forEach(function (p) { if (monthKey(p.vencimento) === mk) dividasPrev += p.valor; }); });
-    var cartaoPrev = 0;
+    var cartaoPrev = sum(openCycles(state).filter(function (c) { return c.total > 0 && monthKey(c.vencimento) === mk; }), function (c) { return c.total; });
     var saidasPrev = despesasPrev + dividasPrev + cartaoPrev;
     var atrasoDesp = state.expenses.filter(function (x) { return !x.pago && x.vencimento < ini; });
     var atrasoDiv = state.debts.filter(function (d) { return !d.pago && d.vencimento < ini; });
@@ -370,6 +466,10 @@
     makeExpense: makeExpense, makeIncome: makeIncome, findExpense: findExpense, findDebt: findDebt, expenseAjuste: expenseAjuste, defaultContaId: defaultContaId,
     payExpense: payExpense, unpayExpense: unpayExpense, canDeleteExpense: canDeleteExpense, deleteExpense: deleteExpense,
     debtRemainingCount: debtRemainingCount, debtSaldo: debtSaldo, debtSaldoTotal: debtSaldoTotal, debtInstallments: debtInstallments,
-    payDebtInstallment: payDebtInstallment, undoDebtPayment: undoDebtPayment, monthSummary: monthSummary
+    payDebtInstallment: payDebtInstallment, undoDebtPayment: undoDebtPayment, monthSummary: monthSummary,
+    dateBR: dateBR, signedValor: signedValor, closingDateFor: closingDateFor, dueDateFor: dueDateFor, openCycles: openCycles,
+    faturaDespesa: faturaDespesa, faturaEmAberto: faturaEmAberto, cardOpenTotal: cardOpenTotal, cardInvoicesUnpaid: cardInvoicesUnpaid,
+    cardUsed: cardUsed, cardAvailable: cardAvailable, splitInstallments: splitInstallments, addCardPurchase: addCardPurchase,
+    closeInvoice: closeInvoice, reopenInvoice: reopenInvoice, deleteCardItem: deleteCardItem
   };
 });
