@@ -225,12 +225,151 @@
     return Number.isFinite(n) && Math.abs(n) <= MAX_CENTS ? n : 0;
   }
 
+  // ---------- fábricas de lançamentos (já no formato do schema atual) ----------
+  function makeExpense(o) {
+    return {
+      id: o.id || uid(), valor: o.valor, descricao: o.descricao, vencimento: o.vencimento, pago: false, dataPagamento: null, valorPago: null,
+      categoria: o.categoria || 'Outros', natureza: o.natureza === 'fixa' ? 'fixa' : 'variavel', contaId: o.contaId || '', conferido: false,
+      origem: o.origem || null, recorrenciaId: o.recorrenciaId || '', competencia: o.competencia || ''
+    };
+  }
+  function makeIncome(o) {
+    return { id: o.id || uid(), valor: o.valor, descricao: o.descricao, data: o.data, categoria: o.categoria || 'Outros', contaId: o.contaId || '', conferido: false, recorrenciaId: o.recorrenciaId || '', competencia: o.competencia || '' };
+  }
+
+  // ---------- despesas: baixa, estorno, exclusão (M1, M3, M8) ----------
+  function findExpense(state, id) { return state.expenses.find(function (e) { return e.id === id; }); }
+  function findDebt(state, id) { return state.debts.find(function (d) { return d.id === id; }); }
+  /** Diferença entre o valor pago e o valor da despesa: > 0 juros/multa, < 0 desconto (M1). */
+  function expenseAjuste(e) { return e.pago && e.valorPago !== null ? e.valorPago - e.valor : 0; }
+  function defaultContaId(state) { return state.contas.length ? state.contas[0].id : ''; }
+
+  /** Dá baixa numa despesa com data e valor efetivamente pagos. `hoje` é usado só para barrar data futura. */
+  function payExpense(state, id, opts, hoje) {
+    var e = findExpense(state, id); opts = opts || {};
+    if (!e) return { ok: false, erro: 'Despesa não encontrada.' };
+    if (e.pago) return { ok: false, erro: 'Esta despesa já está paga.' };
+    var data = opts.data || hoje;
+    if (!isValidISO(data)) return { ok: false, erro: 'Informe uma data de pagamento válida.' };
+    if (hoje && data > hoje) return { ok: false, erro: 'A data do pagamento não pode ser futura.' };
+    var valorPago = opts.valorPago === undefined || opts.valorPago === null ? e.valor : opts.valorPago;
+    if (!Number.isInteger(valorPago) || valorPago <= 0 || valorPago > MAX_CENTS) return { ok: false, erro: 'Informe um valor pago válido.' };
+    e.pago = true; e.dataPagamento = data; e.valorPago = valorPago; e.conferido = false;
+    if (opts.contaId !== undefined) e.contaId = state.contas.some(function (c) { return c.id === opts.contaId; }) ? opts.contaId : '';
+    return { ok: true, ajuste: valorPago - e.valor };
+  }
+  /** Estorna um pagamento: a despesa volta a "em aberto". Para parcela de dívida, desfaz a parcela. */
+  function unpayExpense(state, id) {
+    var e = findExpense(state, id);
+    if (!e) return { ok: false, erro: 'Despesa não encontrada.' };
+    if (!e.pago) return { ok: false, erro: 'Esta despesa não está paga.' };
+    if (e.origem && e.origem.tipo === 'divida') return undoDebtPayment(state, e.origem.id, e.id);
+    e.pago = false; e.dataPagamento = null; e.valorPago = null; e.conferido = false;
+    return { ok: true };
+  }
+  /** Regras de exclusão: despesa vinculada a fatura ou a parcela de dívida não pode sumir em silêncio (M8). */
+  function canDeleteExpense(state, id) {
+    var e = findExpense(state, id);
+    if (!e) return { ok: false, motivo: 'Despesa não encontrada.' };
+    if (e.origem && e.origem.tipo === 'fatura') return { ok: false, vinculo: 'fatura', motivo: 'Esta despesa é a fatura do cartão. Para removê-la, reabra a fatura na aba Cartão (estorne o pagamento antes, se já estiver paga).' };
+    if (e.origem && e.origem.tipo === 'divida') return { ok: false, vinculo: 'divida', motivo: 'Esta despesa é o pagamento de uma parcela de dívida. Para desfazer, estorne o pagamento (a parcela volta para a aba Dívidas).' };
+    return { ok: true };
+  }
+  function deleteExpense(state, id) {
+    var chk = canDeleteExpense(state, id);
+    if (!chk.ok) return chk;
+    var e = findExpense(state, id);
+    if (e.recorrenciaId && e.competencia) {           // não recria a ocorrência que o usuário apagou (M5)
+      var r = state.recorrencias.find(function (x) { return x.id === e.recorrenciaId; });
+      if (r && r.ignoradas.indexOf(e.competencia) < 0) r.ignoradas.push(e.competencia);
+    }
+    state.expenses = state.expenses.filter(function (x) { return x.id !== id; });
+    return { ok: true };
+  }
+
+  // ---------- dívidas (C2, A5, M1-M3) ----------
+  function debtRemainingCount(d) { return d.pago ? 0 : d.parcelas - d.parcelaAtual + 1; }
+  /** Saldo devedor nominal: parcelas restantes x valor da parcela (sem juros futuros) (M2). */
+  function debtSaldo(d) { return debtRemainingCount(d) * d.valorParcela; }
+  function debtSaldoTotal(state) { return sum(state.debts, debtSaldo); }
+  /** Cronograma das parcelas ainda não pagas, preservando o dia original do mês (A5). */
+  function debtInstallments(d) {
+    var out = [];
+    for (var k = 0; k < debtRemainingCount(d); k++) {
+      out.push({ parcela: d.parcelaAtual + k, vencimento: k === 0 ? d.vencimento : addMonths(d.vencimento, k, d.diaOriginal), valor: d.valorParcela });
+    }
+    return out;
+  }
+  /** Paga a parcela atual: gera despesa paga vinculada, avança a parcela/vencimento (ou quita). */
+  function payDebtInstallment(state, debtId, opts, hoje) {
+    var d = findDebt(state, debtId); opts = opts || {};
+    if (!d) return { ok: false, erro: 'Dívida não encontrada.' };
+    if (d.pago) return { ok: false, erro: 'Esta dívida já está quitada.' };
+    var data = opts.data || hoje;
+    if (!isValidISO(data)) return { ok: false, erro: 'Informe uma data de pagamento válida.' };
+    if (hoje && data > hoje) return { ok: false, erro: 'A data do pagamento não pode ser futura.' };
+    var valorPago = opts.valorPago === undefined || opts.valorPago === null ? d.valorParcela : opts.valorPago;
+    if (!Number.isInteger(valorPago) || valorPago <= 0 || valorPago > MAX_CENTS) return { ok: false, erro: 'Informe um valor pago válido.' };
+    var parcela = d.parcelaAtual, venc = d.vencimento;
+    var despesa = {
+      id: uid(), valor: d.valorParcela, descricao: d.descricao + ' (parcela ' + parcela + '/' + d.parcelas + ')', vencimento: venc,
+      pago: true, dataPagamento: data, valorPago: valorPago, categoria: d.categoria, natureza: 'fixa',
+      contaId: opts.contaId !== undefined && state.contas.some(function (c) { return c.id === opts.contaId; }) ? opts.contaId : '',
+      conferido: false, origem: { tipo: 'divida', id: d.id, parcela: parcela }, recorrenciaId: '', competencia: ''
+    };
+    state.expenses.push(despesa);
+    d.pagas.push({ parcela: parcela, vencimento: venc, despesaId: despesa.id });
+    if (d.parcelaAtual >= d.parcelas) d.pago = true;
+    else { d.parcelaAtual += 1; d.vencimento = addMonths(venc, 1, d.diaOriginal); }
+    return { ok: true, despesa: despesa, quitada: d.pago };
+  }
+  /** Desfaz o último pagamento de parcela: remove a despesa gerada e volta parcela e vencimento (M3). */
+  function undoDebtPayment(state, debtId, despesaId) {
+    var d = findDebt(state, debtId);
+    if (!d) return { ok: false, erro: 'Dívida não encontrada.' };
+    var ultima = d.pagas[d.pagas.length - 1];
+    if (!ultima) return { ok: false, erro: 'Não há pagamento registrado para desfazer.' };
+    if (despesaId && ultima.despesaId !== despesaId) return { ok: false, erro: 'Só é possível estornar a parcela mais recente. Estorne primeiro as parcelas seguintes.' };
+    state.expenses = state.expenses.filter(function (e) { return e.id !== ultima.despesaId; });
+    d.pagas.pop();
+    d.parcelaAtual = ultima.parcela; d.vencimento = ultima.vencimento; d.pago = false;
+    return { ok: true, parcela: ultima.parcela };
+  }
+
+  // ---------- resumo do mês: caixa x competência (A1) ----------
+  /** Resumo de um mês. `caixa` = o que de fato entrou/saiu (data de pagamento); `previsto` = vencimentos do mês
+   *  (competência); `atrasoAnterior` = em aberto de meses anteriores. Todos em centavos. */
+  function monthSummary(state, hoje, mk) {
+    mk = mk || monthKey(hoje);
+    var ini = monthStart(mk);
+    var entradasCaixa = sum(state.income.filter(function (x) { return monthKey(x.data) === mk && x.data <= hoje; }), function (x) { return x.valor; });
+    var saidasCaixa = sum(state.expenses.filter(function (x) { return x.pago && monthKey(x.dataPagamento) === mk && x.dataPagamento <= hoje; }), function (x) { return x.valorPago === null ? x.valor : x.valorPago; });
+    var entradasPrev = sum(state.income.filter(function (x) { return monthKey(x.data) === mk; }), function (x) { return x.valor; });
+    var despesasPrev = sum(state.expenses.filter(function (x) { return monthKey(x.vencimento) === mk; }), function (x) { return x.valor; });
+    var dividasPrev = 0;
+    state.debts.forEach(function (d) { debtInstallments(d).forEach(function (p) { if (monthKey(p.vencimento) === mk) dividasPrev += p.valor; }); });
+    var cartaoPrev = 0;
+    var saidasPrev = despesasPrev + dividasPrev + cartaoPrev;
+    var atrasoDesp = state.expenses.filter(function (x) { return !x.pago && x.vencimento < ini; });
+    var atrasoDiv = state.debts.filter(function (d) { return !d.pago && d.vencimento < ini; });
+    return {
+      mes: mk,
+      caixa: { entradas: entradasCaixa, saidas: saidasCaixa, resultado: entradasCaixa - saidasCaixa },
+      previsto: { entradas: entradasPrev, saidas: saidasPrev, resultado: entradasPrev - saidasPrev, detalhe: { despesas: despesasPrev, dividas: dividasPrev, cartao: cartaoPrev } },
+      atrasoAnterior: { total: sum(atrasoDesp, function (x) { return x.valor; }) + sum(atrasoDiv, function (d) { return d.valorParcela; }), qtd: atrasoDesp.length + atrasoDiv.length }
+    };
+  }
+
   return {
     localISO: localISO, hojeISO: hojeISO, parseISO: parseISO, lastDayOfMonth: lastDayOfMonth, isValidISO: isValidISO,
     makeISO: makeISO, addDays: addDays, addMonths: addMonths, monthKey: monthKey, monthStart: monthStart,
     monthEnd: monthEnd, addMonthKey: addMonthKey,
     SCHEMA_VERSION: SCHEMA_VERSION, MAX_CENTS: MAX_CENTS, CATEGORIAS_PADRAO: CATEGORIAS_PADRAO,
     parseCents: parseCents, safeCents: safeCents, safeSigned: safeSigned, fmtBRL: fmtBRL, centsToInput: centsToInput, sum: sum, uid: uid, freshState: freshState,
-    normalizeState: normalizeState, defaultVencimentoDia: defaultVencimentoDia
+    normalizeState: normalizeState, defaultVencimentoDia: defaultVencimentoDia,
+    makeExpense: makeExpense, makeIncome: makeIncome, findExpense: findExpense, findDebt: findDebt, expenseAjuste: expenseAjuste, defaultContaId: defaultContaId,
+    payExpense: payExpense, unpayExpense: unpayExpense, canDeleteExpense: canDeleteExpense, deleteExpense: deleteExpense,
+    debtRemainingCount: debtRemainingCount, debtSaldo: debtSaldo, debtSaldoTotal: debtSaldoTotal, debtInstallments: debtInstallments,
+    payDebtInstallment: payDebtInstallment, undoDebtPayment: undoDebtPayment, monthSummary: monthSummary
   };
 });
