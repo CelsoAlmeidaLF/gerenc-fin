@@ -69,7 +69,12 @@
 
   async function load(){
     const current = localStorage.getItem(STATE_KEY);
-    if (current) normalizeState(JSON.parse(current));
+    if (current) {
+      var parsedCurrent = JSON.parse(current);
+      normalizeState(parsedCurrent);
+      // Estado salvo no formato antigo (reais/float): grava já migrado para centavos (schema 2).
+      if (!(Number(parsedCurrent && parsedCurrent.schemaVersion) >= 2)) await save();
+    }
     else {
       const metaRaw = localStorage.getItem(SECURITY_META_KEY);
       const secureRaw = localStorage.getItem(SECURITY_DATA_KEY);
@@ -179,19 +184,14 @@
 
   // ---------- render helpers ----------
   function dueTag(venc, pago){
-    if (pago) return '<span class="tag paid">pago</span>';
-    if (!venc) return '';
-    var h = hoje();
-    if (venc < h) return '<span class="tag overdue">atrasado</span>';
-    if (venc <= Engine.addDays(h, 7)) return '<span class="tag due-soon">vence em breve</span>';
+    var st = Engine.dueStatus(venc, pago, hoje());
+    if (st === 'pago') return '<span class="tag paid">pago</span>';
+    if (st === 'atrasado') return '<span class="tag overdue">atrasado</span>';
+    if (st === 'em-breve') return '<span class="tag due-soon">vence em breve</span>';
     return '';
   }
 
-  function dateBR(iso){
-    if(!iso) return '';
-    var p = iso.split('-');
-    return p[2]+'/'+p[1]+'/'+p[0];
-  }
+  function dateBR(iso){ return Engine.dateBR(iso); }
 
   function rowHtml(opts){
     // opts: {title, meta, amt, amtClass, paid, actions: [{label,cls,action}]}

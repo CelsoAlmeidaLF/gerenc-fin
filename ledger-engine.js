@@ -631,6 +631,14 @@
   }
   function projectionAll(state, hoje) { return [30, 60, 90].map(function (d) { return projection(state, hoje, d); }); }
 
+  /** Situação de vencimento comparando strings ISO locais (sem Date/hora): "pago", "atrasado", "em-breve" (até 7 dias) ou "" (B2). */
+  function dueStatus(venc, pago, hoje) {
+    if (pago) return 'pago';
+    if (!venc) return '';
+    if (venc < hoje) return 'atrasado';
+    return venc <= addDays(hoje, 7) ? 'em-breve' : '';
+  }
+
   // ---------- resumo do mês: caixa x competência (A1) ----------
   /** Resumo de um mês. `caixa` = o que de fato entrou/saiu (data de pagamento); `previsto` = vencimentos do mês
    *  (competência); `atrasoAnterior` = em aberto de meses anteriores. Todos em centavos. */
@@ -674,6 +682,6 @@
     saldoConta: saldoConta, saldoAtual: saldoAtual, setConferido: setConferido, reconcile: reconcile,
     addCategory: addCategory, monthReport: monthReport, setBudget: setBudget, budgetStatus: budgetStatus,
     HORIZONTE_DIAS: HORIZONTE_DIAS, addRecurrence: addRecurrence, materializeRecurrences: materializeRecurrences,
-    setRecurrenceActive: setRecurrenceActive, removeRecurrence: removeRecurrence, projection: projection, projectionAll: projectionAll
+    dueStatus: dueStatus, setRecurrenceActive: setRecurrenceActive, removeRecurrence: removeRecurrence, projection: projection, projectionAll: projectionAll
   };
 });
