@@ -504,6 +504,59 @@
     };
   }
 
+  // ---------- categorias, relatório mensal e orçamento (M4) ----------
+  function addCategory(state, nome) {
+    var c = safeText(nome).slice(0, 40);
+    if (!c) return '';
+    if (state.categorias.indexOf(c) < 0) state.categorias.push(c);
+    return c;
+  }
+  /** Relatório do mês por competência: receitas, despesas fixas, variáveis, dívidas e resultado.
+   *  - despesas comuns entram pelo vencimento; compras no cartão pela data da compra (cada parcela no seu mês),
+   *    sem contar de novo a despesa da fatura; parcelas de dívida pelo vencimento (pagas ou em aberto). */
+  function monthReport(state, mk) {
+    var receitas = 0, fixas = 0, variaveis = 0, dividas = 0, porCat = {}, recPorCat = {};
+    var soma = function (mapa, cat, v) { mapa[cat] = (mapa[cat] || 0) + v; };
+    state.income.forEach(function (i) { if (monthKey(i.data) === mk) { receitas += i.valor; soma(recPorCat, i.categoria, i.valor); } });
+    state.expenses.forEach(function (e) {
+      if (monthKey(e.vencimento) !== mk) return;
+      var o = e.origem && e.origem.tipo;
+      if (o === 'divida') { dividas += e.valor; soma(porCat, e.categoria, e.valor); }
+      else if (o === 'fatura') return;                                // já contada pelas compras do cartão
+      else { if (e.natureza === 'fixa') fixas += e.valor; else variaveis += e.valor; soma(porCat, e.categoria, e.valor); }
+    });
+    state.debts.forEach(function (d) {
+      debtInstallments(d).forEach(function (p) { if (monthKey(p.vencimento) === mk) { dividas += p.valor; soma(porCat, d.categoria, p.valor); } });
+    });
+    var itens = state.card.lancamentos.slice();
+    state.card.faturas.forEach(function (f) {
+      if (f.itens.length) Array.prototype.push.apply(itens, f.itens);
+      else { var d = faturaDespesa(state, f); if (d && monthKey(d.vencimento) === mk) { variaveis += d.valor; soma(porCat, 'Cartão', d.valor); } }   // fatura legada sem itens
+    });
+    itens.forEach(function (l) {
+      if (l.transporteDe || monthKey(l.data) !== mk) return;
+      var v = signedValor(l); variaveis += v; soma(porCat, l.categoria, v);
+    });
+    var totalDespesas = fixas + variaveis + dividas;
+    return { mes: mk, receitas: receitas, fixas: fixas, variaveis: variaveis, dividas: dividas, totalDespesas: totalDespesas, resultado: receitas - totalDespesas, despesasPorCategoria: porCat, receitasPorCategoria: recPorCat };
+  }
+  /** Define (ou remove, com valor 0) o orçamento mensal de uma categoria. */
+  function setBudget(state, categoria, cents) {
+    var c = addCategory(state, categoria);
+    if (!c) return { ok: false, erro: 'Informe a categoria.' };
+    if (!Number.isInteger(cents) || cents < 0 || cents > MAX_CENTS) return { ok: false, erro: 'Informe um valor válido.' };
+    if (cents === 0) delete state.orcamentos[c]; else state.orcamentos[c] = cents;
+    return { ok: true, categoria: c };
+  }
+  /** Gasto x orçamento por categoria. nivel: "ok" (<70%), "warn" (>=70%), "danger" (>=90%), mesmos alertas do limite do cartão. */
+  function budgetStatus(state, mk) {
+    var gastos = monthReport(state, mk).despesasPorCategoria;
+    return Object.keys(state.orcamentos).sort().map(function (cat) {
+      var orc = state.orcamentos[cat], gasto = Math.max(0, gastos[cat] || 0), pct = orc > 0 ? (gasto / orc) * 100 : 0;
+      return { categoria: cat, orcamento: orc, gasto: gasto, restante: orc - gasto, pct: pct, estourou: gasto > orc, nivel: pct >= 90 ? 'danger' : pct >= 70 ? 'warn' : 'ok' };
+    });
+  }
+
   // ---------- resumo do mês: caixa x competência (A1) ----------
   /** Resumo de um mês. `caixa` = o que de fato entrou/saiu (data de pagamento); `previsto` = vencimentos do mês
    *  (competência); `atrasoAnterior` = em aberto de meses anteriores. Todos em centavos. */
@@ -544,6 +597,7 @@
     cardUsed: cardUsed, cardAvailable: cardAvailable, splitInstallments: splitInstallments, addCardPurchase: addCardPurchase,
     closeInvoice: closeInvoice, reopenInvoice: reopenInvoice, deleteCardItem: deleteCardItem,
     addAccount: addAccount, removeAccount: removeAccount, contaDoItem: contaDoItem, realizedMovements: realizedMovements,
-    saldoConta: saldoConta, saldoAtual: saldoAtual, setConferido: setConferido, reconcile: reconcile
+    saldoConta: saldoConta, saldoAtual: saldoAtual, setConferido: setConferido, reconcile: reconcile,
+    addCategory: addCategory, monthReport: monthReport, setBudget: setBudget, budgetStatus: budgetStatus
   };
 });

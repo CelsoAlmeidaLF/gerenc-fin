@@ -213,7 +213,7 @@
       return rowHtml({
         id: x.id,
         title: escapeHtml(x.descricao) + dueTag(x.vencimento, false),
-        meta: 'vence em ' + dateBR(x.vencimento) + (x.origem && x.origem.tipo === 'fatura' ? ' · fatura do cartão' : ''),
+        meta: 'vence em ' + dateBR(x.vencimento) + ' · ' + escapeHtml(x.categoria) + (x.natureza === 'fixa' ? ' · fixa' : '') + (x.origem && x.origem.tipo === 'fatura' ? ' · fatura do cartão' : ''),
         amt: fmt(x.valor),
         amtClass: 'neg',
         paid: false,
@@ -245,7 +245,7 @@
       return rowHtml({
         id: x.id,
         title: escapeHtml(x.descricao),
-        meta: dateBR(x.data),
+        meta: dateBR(x.data) + ' · ' + escapeHtml(x.categoria),
         amt: fmt(x.valor),
         amtClass: 'pos',
         paid: false,
@@ -297,7 +297,7 @@
         return rowHtml({
           id: x.id,
           title: escapeHtml(x.descricao) + (x.parcelas > 1 ? ' · parcela ' + x.parcelaAtual + '/' + x.parcelas : '') + (cred ? ' <span class="tag paid">crédito</span>' : ''),
-          meta: dateBR(x.data),
+          meta: dateBR(x.data) + ' · ' + escapeHtml(x.categoria),
           amt: (cred ? '− ' : '') + fmt(x.valor),
           amtClass: cred ? 'pos' : 'neg',
           paid: false,
@@ -417,12 +417,43 @@
     }).join('') : '<div class="empty">nenhum movimento realizado desde o saldo inicial.</div>';
   }
 
+  function fillCategorySelects(){
+    document.querySelectorAll('select[data-cat]').forEach(function(sel){
+      var prev = sel.value || sel.dataset.default || 'Outros';
+      sel.innerHTML = state.categorias.map(function(c){ return '<option>' + escapeHtml(c) + '</option>'; }).join('');
+      sel.value = state.categorias.indexOf(prev) >= 0 ? prev : 'Outros';
+    });
+    document.getElementById('oCatList').innerHTML = state.categorias.map(function(c){ return '<option value="' + escapeHtml(c) + '">'; }).join('');
+  }
+  function reportMonth(){ var v = document.getElementById('rMes').value; return /^\d{4}-\d{2}$/.test(v) ? v : Engine.monthKey(hoje()); }
+  function renderRelatorio(){
+    var mk = reportMonth(), r = Engine.monthReport(state, mk);
+    var line = function(label, v, cls){ return '<div class="r"><span>' + label + '</span><span class="num ' + (cls||'') + '">' + fmt(v) + '</span></div>'; };
+    document.getElementById('reportBox').innerHTML = line('Receitas', r.receitas, 'pos') + line('Despesas fixas', r.fixas, 'neg') + line('Despesas variáveis (inclui cartão)', r.variaveis, 'neg') +
+      line('Dívidas (parcelas do mês)', r.dividas, 'neg') + line('Resultado', r.resultado, r.resultado < 0 ? 'neg' : 'pos');
+    var cats = Object.keys(r.despesasPorCategoria).filter(function(c){ return r.despesasPorCategoria[c] !== 0; }).sort(function(a,b){ return r.despesasPorCategoria[b] - r.despesasPorCategoria[a]; });
+    document.getElementById('listPorCategoria').innerHTML = cats.length ? cats.map(function(c){
+      return rowHtml({ id: c, title: escapeHtml(c), meta: r.totalDespesas > 0 ? Math.round(r.despesasPorCategoria[c] / r.totalDespesas * 100) + '% das despesas do mês' : '', amt: fmt(r.despesasPorCategoria[c]), amtClass: 'neg', paid: false, actions: [] });
+    }).join('') : '<div class="empty">nenhuma despesa neste mês.</div>';
+
+    var bs = Engine.budgetStatus(state, mk);
+    document.getElementById('listOrcamentos').innerHTML = bs.length ? bs.map(function(b){
+      return '<div class="card-limit-bar' + (b.nivel === 'danger' ? ' danger' : b.nivel === 'warn' ? ' warn' : '') + '" data-cat="' + escapeHtml(b.categoria) + '" style="margin-bottom:10px">' +
+        '<div class="top-line"><span>' + escapeHtml(b.categoria) + ' · gasto <b class="num">' + fmt(b.gasto) + '</b></span><span>orçamento <b class="num">' + fmt(b.orcamento) + '</b></span></div>' +
+        '<div class="track"><div class="fill" style="width:' + Math.min(100, b.pct) + '%"></div></div>' +
+        '<div class="config-row"><span>' + (b.estourou ? 'estourou em <b>' + fmt(-b.restante) + '</b>' : 'restam <b>' + fmt(b.restante) + '</b>') + ' (' + Math.round(b.pct) + '%)</span>' +
+        '<span class="actions"><button class="del" data-action="del-orcamento" type="button" style="all:unset;cursor:pointer;color:var(--rust)">remover</button></span></div></div>';
+    }).join('') : '<div class="empty">nenhum orçamento definido.</div>';
+  }
+
   function renderAll(){
     renderDespesas();
     renderEntradas();
     renderCartao();
     renderDividas();
     renderConta();
+    fillCategorySelects();
+    renderRelatorio();
     renderSummary();
   }
 
@@ -456,7 +487,7 @@
     var desc = document.getElementById('dDesc').value.trim();
     var venc = document.getElementById('dVenc').value;
     if (!(valor > 0) || !desc || !venc) return;
-    state.expenses.push(Engine.makeExpense({valor: valor, descricao: desc, vencimento: venc}));
+    state.expenses.push(Engine.makeExpense({valor: valor, descricao: desc, vencimento: venc, categoria: document.getElementById('dCat').value, natureza: document.getElementById('dNat').value}));
     this.reset();
     save(); renderAll();
   });
@@ -467,7 +498,7 @@
     var desc = document.getElementById('eDesc').value.trim();
     var data = document.getElementById('eData').value;
     if (!(valor > 0) || !desc || !data) return;
-    state.income.push(Engine.makeIncome({valor: valor, descricao: desc, data: data, contaId: state.contas.length > 1 ? document.getElementById('eConta').value : ''}));
+    state.income.push(Engine.makeIncome({valor: valor, descricao: desc, data: data, categoria: document.getElementById('eCat').value, contaId: state.contas.length > 1 ? document.getElementById('eConta').value : ''}));
     this.reset();
     save(); renderAll();
   });
@@ -491,6 +522,20 @@
     save(); renderAll();
   });
 
+  document.getElementById('formOrcamento').addEventListener('submit', function(e){
+    e.preventDefault();
+    var cents = Engine.parseCents(document.getElementById('oValor').value);
+    var r = Engine.setBudget(state, document.getElementById('oCat').value, cents === null ? -1 : cents);
+    if (!r.ok) { showMessage('Orçamento inválido', r.erro); return; }
+    this.reset(); save(); renderAll();
+  });
+  document.getElementById('rMes').addEventListener('input', renderRelatorio);
+  document.getElementById('listOrcamentos').addEventListener('click', function(e){
+    var b = e.target.closest('[data-action="del-orcamento"]'); if (!b) return;
+    e.stopPropagation();
+    Engine.setBudget(state, b.closest('[data-cat]').dataset.cat, 0); save(); renderAll();
+  });
+
   document.getElementById('formConfigCartao').addEventListener('submit', function(e){
     e.preventDefault();
     var limite = readAmount('cLimite');
@@ -510,7 +555,7 @@
     if (!(valor > 0) || !desc || !data) return;
     var tipo = document.getElementById('ccTipo').value;
     var parcelas = Math.min(48, Math.max(1, parseInt(document.getElementById('ccParcelas').value) || 1));
-    Engine.addCardPurchase(state, {valor: valor, descricao: desc, data: data, tipo: tipo, parcelas: parcelas});
+    Engine.addCardPurchase(state, {valor: valor, descricao: desc, data: data, tipo: tipo, parcelas: parcelas, categoria: document.getElementById('ccCat').value});
     this.reset();
     document.getElementById('ccData').value = hoje();
     save(); renderAll();
@@ -539,6 +584,7 @@
     var btn = e.target.closest('button[data-action]');
     if (!btn) return;
     var row = btn.closest('.row');
+    if (!row) return;
     var id = row.dataset.id;
     var action = btn.dataset.action;
     var r;
@@ -682,5 +728,6 @@
     if (el && !el.value) el.value = hoje();
   });
 
+  document.getElementById('rMes').value = Engine.monthKey(hoje());
   try { await load(); renderAll(); } catch (error) { document.getElementById('gateStatus').textContent = error.message || 'Falha na migração. Os dados anteriores foram preservados.'; }
 })().catch(() => window.lockVault());
