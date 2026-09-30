@@ -557,6 +557,80 @@
     });
   }
 
+  // ---------- lançamentos recorrentes mensais (M5) ----------
+  var HORIZONTE_DIAS = 90;
+  function addRecurrence(state, o) {
+    if (!isValidISO(o.inicio)) return { ok: false, erro: 'Informe a data da primeira ocorrência.' };
+    if (!Number.isInteger(o.valor) || o.valor <= 0 || o.valor > MAX_CENTS) return { ok: false, erro: 'Informe um valor válido.' };
+    var descricao = safeText(o.descricao);
+    if (!descricao) return { ok: false, erro: 'Informe a descrição.' };
+    var r = {
+      id: uid(), tipo: o.tipo === 'entrada' ? 'entrada' : 'despesa', valor: o.valor, descricao: descricao, dia: parseISO(o.inicio).d, inicio: o.inicio,
+      fim: isValidISO(o.fim) ? o.fim : '', categoria: addCategory(state, o.categoria) || 'Outros', natureza: o.natureza === 'variavel' ? 'variavel' : 'fixa',
+      contaId: o.contaId || '', ativa: true, ignoradas: []
+    };
+    state.recorrencias.push(r);
+    return { ok: true, recorrencia: r };
+  }
+  /** Gera as ocorrências que faltam de cada modelo ativo até `HORIZONTE_DIAS` à frente. Idempotente: uma ocorrência por
+   *  modelo e mês (competência); meses apagados pelo usuário (ignoradas) não voltam. Dia 31 vira o último dia do mês. */
+  function materializeRecurrences(state, hoje) {
+    var ate = monthKey(addDays(hoje, HORIZONTE_DIAS)), criadas = 0;
+    state.recorrencias.forEach(function (r) {
+      if (!r.ativa) return;
+      var tem = {};
+      (r.tipo === 'entrada' ? state.income : state.expenses).forEach(function (x) { if (x.recorrenciaId === r.id && x.competencia) tem[x.competencia] = true; });
+      var mk = monthKey(r.inicio);
+      for (var guard = 0; mk <= ate && guard < 1200; guard++, mk = addMonthKey(mk, 1)) {
+        var data = addMonths(monthStart(mk), 0, r.dia);
+        if (data < r.inicio || (r.fim && data > r.fim) || tem[mk] || r.ignoradas.indexOf(mk) >= 0) continue;
+        if (r.tipo === 'entrada') state.income.push(makeIncome({ valor: r.valor, descricao: r.descricao, data: data, categoria: r.categoria, contaId: r.contaId, recorrenciaId: r.id, competencia: mk }));
+        else state.expenses.push(makeExpense({ valor: r.valor, descricao: r.descricao, vencimento: data, categoria: r.categoria, natureza: r.natureza, contaId: r.contaId, recorrenciaId: r.id, competencia: mk }));
+        criadas++;
+      }
+    });
+    return criadas;
+  }
+  /** Pausa/retoma um modelo. Pausar só impede novas ocorrências; as já geradas ficam. */
+  function setRecurrenceActive(state, id, ativa) {
+    var r = state.recorrencias.find(function (x) { return x.id === id; });
+    if (r) r.ativa = !!ativa;
+    return !!r;
+  }
+  /** Exclui o modelo e as ocorrências futuras ainda não pagas (vencimento/data depois de hoje); o que já passou fica. */
+  function removeRecurrence(state, id, hoje) {
+    state.recorrencias = state.recorrencias.filter(function (r) { return r.id !== id; });
+    state.expenses = state.expenses.filter(function (e) { return !(e.recorrenciaId === id && !e.pago && e.vencimento > hoje); });
+    state.income = state.income.filter(function (i) { return !(i.recorrenciaId === id && i.data > hoje); });
+    state.expenses.forEach(function (e) { if (e.recorrenciaId === id) { e.recorrenciaId = ''; e.competencia = ''; } });
+    state.income.forEach(function (i) { if (i.recorrenciaId === id) { i.recorrenciaId = ''; i.competencia = ''; } });
+  }
+
+  // ---------- projeção de caixa 30/60/90 dias (M6) ----------
+  /** Projeta o caixa até `dias` à frente: despesas em aberto (inclui atrasadas e faturas já fechadas), parcelas de dívidas,
+   *  faturas previstas dos ciclos abertos do cartão e entradas esperadas (datas futuras, inclusive recorrentes).
+   *  Parte do saldo atual das contas (0 se não houver conta). Não altera o estado. */
+  function projection(state, hoje, dias) {
+    var st = JSON.parse(JSON.stringify(state));
+    materializeRecurrences(st, hoje);
+    var fim = addDays(hoje, dias);
+    var entradas = sum(st.income.filter(function (i) { return i.data > hoje && i.data <= fim; }), function (i) { return i.valor; });
+    var abertas = st.expenses.filter(function (e) { return !e.pago && e.vencimento <= fim; });
+    var atrasadas = abertas.filter(function (e) { return e.vencimento < hoje; });
+    var despesas = sum(abertas, function (e) { return e.valor; });
+    var dividas = 0, dividasAtrasadas = 0;
+    st.debts.forEach(function (d) { debtInstallments(d).forEach(function (p) { if (p.vencimento <= fim) { dividas += p.valor; if (p.vencimento < hoje) dividasAtrasadas += p.valor; } }); });
+    var cartao = sum(openCycles(st).filter(function (c) { return c.total > 0 && c.vencimento <= fim; }), function (c) { return c.total; });
+    var saldoInicial = saldoAtual(st, hoje), saidas = despesas + dividas + cartao;
+    return {
+      dias: dias, ate: fim, temConta: saldoInicial !== null, saldoInicial: saldoInicial || 0, entradas: entradas,
+      saidas: { despesas: despesas, dividas: dividas, cartao: cartao, total: saidas },
+      atrasadas: sum(atrasadas, function (e) { return e.valor; }) + dividasAtrasadas,
+      saldoProjetado: (saldoInicial || 0) + entradas - saidas
+    };
+  }
+  function projectionAll(state, hoje) { return [30, 60, 90].map(function (d) { return projection(state, hoje, d); }); }
+
   // ---------- resumo do mês: caixa x competência (A1) ----------
   /** Resumo de um mês. `caixa` = o que de fato entrou/saiu (data de pagamento); `previsto` = vencimentos do mês
    *  (competência); `atrasoAnterior` = em aberto de meses anteriores. Todos em centavos. */
@@ -598,6 +672,8 @@
     closeInvoice: closeInvoice, reopenInvoice: reopenInvoice, deleteCardItem: deleteCardItem,
     addAccount: addAccount, removeAccount: removeAccount, contaDoItem: contaDoItem, realizedMovements: realizedMovements,
     saldoConta: saldoConta, saldoAtual: saldoAtual, setConferido: setConferido, reconcile: reconcile,
-    addCategory: addCategory, monthReport: monthReport, setBudget: setBudget, budgetStatus: budgetStatus
+    addCategory: addCategory, monthReport: monthReport, setBudget: setBudget, budgetStatus: budgetStatus,
+    HORIZONTE_DIAS: HORIZONTE_DIAS, addRecurrence: addRecurrence, materializeRecurrences: materializeRecurrences,
+    setRecurrenceActive: setRecurrenceActive, removeRecurrence: removeRecurrence, projection: projection, projectionAll: projectionAll
   };
 });
