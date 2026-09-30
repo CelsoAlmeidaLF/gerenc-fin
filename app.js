@@ -9,7 +9,9 @@
   var SECURITY_DATA_KEY = "livro_caixa_secure_data_v1";
   var SECURITY_RECOVERY_KEY = "livro_caixa_recovery_data_v1";
   var DEVICE_CERT_KEY = "livro_caixa_device_cert_v1";
-  var todayISO = new Date().toISOString().slice(0,10);
+  var Engine = window.LedgerEngine;
+  // Data local recalculada a cada uso (C1, M7): nunca congelada na abertura e nunca em UTC.
+  function hoje(){ return Engine.hojeISO(); }
 
   var state = {
     expenses: [],   // {id, valor, descricao, vencimento, pago, dataPagamento}
@@ -136,9 +138,9 @@
   function dueTag(venc, pago){
     if (pago) return '<span class="tag paid">pago</span>';
     if (!venc) return '';
-    if (venc < todayISO) return '<span class="tag overdue">atrasado</span>';
-    var in7 = new Date(); in7.setDate(in7.getDate()+7);
-    if (new Date(venc+'T00:00:00') <= in7) return '<span class="tag due-soon">vence em breve</span>';
+    var h = hoje();
+    if (venc < h) return '<span class="tag overdue">atrasado</span>';
+    if (venc <= Engine.addDays(h, 7)) return '<span class="tag due-soon">vence em breve</span>';
     return '';
   }
 
@@ -301,7 +303,7 @@
   function monthKey(iso){ return iso ? iso.slice(0,7) : ''; }
 
   function renderSummary(){
-    var mk = todayISO.slice(0,7);
+    var mk = Engine.monthKey(hoje());
     var entradasMes = state.income.filter(function(x){return monthKey(x.data)===mk;}).reduce(function(s,x){return s+Number(x.valor);},0);
     var despesasMes = state.expenses.filter(function(x){return monthKey(x.vencimento)===mk;}).reduce(function(s,x){return s+Number(x.valor);},0);
     document.getElementById('sumEntradas').textContent = fmt(entradasMes);
@@ -400,13 +402,11 @@
     if (!state.card.lancamentos.length) { alert('Não há lançamentos no ciclo atual para fechar.'); return; }
     var total = cardUsedTotal();
     var faturaId = uid();
-    var hoje = todayISO;
-    var vencFatura = new Date();
-    vencFatura.setDate(vencFatura.getDate() + 10);
-    var vencISO = vencFatura.toISOString().slice(0,10);
+    var hojeStr = hoje();
+    var vencISO = Engine.addDays(hojeStr, 10);
     var despesaId = uid();
-    state.expenses.push({id: despesaId, valor: total, descricao: 'Fatura do cartão (' + dateBR(hoje) + ')', vencimento: vencISO, pago: false, dataPagamento: null});
-    state.card.faturas.push({id: faturaId, total: total, dataFechamento: hoje, despesaId: despesaId});
+    state.expenses.push({id: despesaId, valor: total, descricao: 'Fatura do cartão (' + dateBR(hojeStr) + ')', vencimento: vencISO, pago: false, dataPagamento: null});
+    state.card.faturas.push({id: faturaId, total: total, dataFechamento: hojeStr, despesaId: despesaId});
     state.card.lancamentos = [];
     save(); renderAll();
     document.querySelector('nav.tabs button[data-tab="despesas"]').click();
@@ -422,7 +422,7 @@
 
     if (action === 'pay-expense') {
       var exp = state.expenses.find(function(x){return x.id===id;});
-      if (exp) { exp.pago = true; exp.dataPagamento = todayISO; }
+      if (exp) { exp.pago = true; exp.dataPagamento = hoje(); }
     } else if (action === 'del-expense') {
       if (confirm('Excluir esta despesa?')) state.expenses = state.expenses.filter(function(x){return x.id!==id;});
     } else if (action === 'del-income') {
@@ -438,7 +438,7 @@
           d.parcelaAtual += 1;
           var nextDate = new Date(d.vencimento + 'T00:00:00');
           nextDate.setMonth(nextDate.getMonth() + 1);
-          d.vencimento = nextDate.toISOString().slice(0,10);
+          d.vencimento = Engine.localISO(nextDate);
         }
       }
     } else if (action === 'del-debt') {
@@ -449,7 +449,7 @@
 
   // ---------- export / import / reset ----------
   document.getElementById('btnExport').addEventListener('click', async function(){
-    try { await window.exportProtected(state, 'gerenc-fin:backup', 'livro-caixa-'+todayISO+'.secure.json'); }
+    try { await window.exportProtected(state, 'gerenc-fin:backup', 'livro-caixa-'+hoje()+'.secure.json'); }
     catch (_) { alert('Não foi possível exportar o backup protegido.'); }
   });
 
@@ -516,7 +516,7 @@
   document.getElementById('dataHoje').textContent = new Date().toLocaleDateString('pt-BR', {day:'2-digit', month:'long', year:'numeric'});
   ['dVenc','eData','ccData','vVenc'].forEach(function(id){
     var el = document.getElementById(id);
-    if (el && !el.value) el.value = todayISO;
+    if (el && !el.value) el.value = hoje();
   });
 
   try { await load(); renderAll(); } catch (error) { document.getElementById('gateStatus').textContent = error.message || 'Falha na migração. Os dados anteriores foram preservados.'; }
