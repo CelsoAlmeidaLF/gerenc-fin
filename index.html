@@ -148,6 +148,7 @@
   .pay-form { display: grid; gap: 10px; margin-top: 10px; }
   .pay-form label { display: flex; flex-direction: column; gap: 3px; font-family: 'IBM Plex Mono', monospace; font-size: 0.68rem; color: var(--ink-dim); }
   .pay-form .pay-diff { min-height: 1.2em; margin: 0; }
+  form.entry label[hidden] { display: none; }
   form.entry label {
     display: flex;
     flex-direction: column;
@@ -279,6 +280,14 @@
   .row.cycle { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin-top: 10px; }
   .row.cycle .desc .t { font-weight: 600; }
   .row.item { padding-left: 12px; }
+  .rec-box { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 14px 16px; margin-bottom: 10px; }
+  .rec-box .t { font-size: 0.94rem; margin-bottom: 8px; }
+  .rec-box form { display: flex; gap: 8px; align-items: end; flex-wrap: wrap; }
+  .rec-box form label { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 140px; font-family: 'IBM Plex Mono', monospace; font-size: 0.68rem; color: var(--ink-dim); }
+  .rec-box form input { font-family: 'IBM Plex Mono', monospace; font-size: 0.88rem; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; color: var(--ink); width: 100%; }
+  .rec-box form button { font-family: 'IBM Plex Mono', monospace; font-weight: 600; font-size: 0.8rem; background: var(--accent); color: var(--bg); border: none; border-radius: 999px; padding: 10px 16px; cursor: pointer; }
+  .rec-result { font-family: 'IBM Plex Mono', monospace; font-size: 0.74rem; color: var(--ink-dim); margin-top: 8px; line-height: 1.5; }
+  .rec-result.ok { color: var(--green); } .rec-result.bad { color: var(--rust); } .rec-result.mid { color: var(--gold); }
   .close-cycle-btn {
     margin-top: 12px;
     font-family: 'IBM Plex Mono', monospace;
@@ -359,6 +368,7 @@
     <div class="cell pos"><div class="label">entradas</div><div class="value num" id="sumEntradas">R$ 0,00</div></div>
     <div class="cell neg"><div class="label">saídas pagas</div><div class="value num" id="sumDespesas">R$ 0,00</div></div>
     <div class="cell saldo"><div class="label">resultado</div><div class="value num" id="sumSaldo">R$ 0,00</div></div>
+    <div class="cell saldo"><div class="label">saldo atual em conta</div><div class="value num" id="sumSaldoConta">—</div><div class="sub" id="sumSaldoContaSub"></div></div>
   </div>
   <div class="sum-title">previsto no mês (vencimentos)</div>
   <div class="ledger-summary">
@@ -378,6 +388,7 @@
     <button data-tab="entradas">Entradas</button>
     <button data-tab="cartao">Cartão</button>
     <button data-tab="dividas">Dívidas</button>
+    <button data-tab="conta">Conta</button>
   </nav>
 
   <!-- DESPESAS -->
@@ -400,6 +411,7 @@
       <label>Valor (R$)<input type="number" step="0.01" min="0" max="999999999.99" id="eValor" required></label>
       <label class="wide">Descrição<input type="text" id="eDesc" required placeholder="ex: salário"></label>
       <label>Data<input type="date" id="eData" required></label>
+      <label id="eContaLabel" hidden>Conta<select id="eConta"></select></label>
       <button type="submit" class="add">Lançar</button>
     </form>
     <div class="section-title">recebidas</div>
@@ -454,6 +466,22 @@
     <div class="list" id="listDividasAbertas"></div>
     <div class="section-title">quitadas</div>
     <div class="list" id="listDividasQuitadas"></div>
+  </section>
+
+  <!-- CONTA: saldo real e conciliação -->
+  <section class="panel" id="panel-conta">
+    <form class="entry" id="formConta">
+      <label class="wide">Nome da conta<input type="text" id="kNome" required placeholder="ex: conta corrente"></label>
+      <label>Saldo inicial (R$)<input type="number" step="0.01" min="-999999999.99" max="999999999.99" id="kSaldo" required></label>
+      <label>Data do saldo<input type="date" id="kData" required></label>
+      <button type="submit" class="add">Adicionar conta</button>
+    </form>
+    <div class="section-title">contas</div>
+    <div class="list" id="listContas"></div>
+    <div class="section-title">conciliação com o banco</div>
+    <div id="conciliacao"></div>
+    <div class="section-title">movimentos realizados</div>
+    <div class="list" id="listMovimentos"></div>
   </section>
 
   <footer class="util">

@@ -378,11 +378,51 @@
     document.getElementById('sumDividas').textContent = fmt(Engine.debtSaldoTotal(state));
   }
 
+  function contaOptions(){ return state.contas.map(function(c){ return '<option value="' + escapeHtml(c.id) + '">' + escapeHtml(c.nome) + '</option>'; }).join(''); }
+  function renderConta(){
+    var h = hoje();
+    var total = Engine.saldoAtual(state, h);
+    var el = document.getElementById('sumSaldoConta');
+    el.textContent = total === null ? '—' : fmt(total);
+    if (total !== null) setSaldoColor(el, total); else el.style.color = '';
+    document.getElementById('sumSaldoContaSub').textContent = total === null ? 'cadastre em Conta' : '';
+    document.getElementById('eContaLabel').hidden = state.contas.length < 2;
+    var sel = document.getElementById('eConta'); var prev = sel.value; sel.innerHTML = contaOptions(); if (prev) sel.value = prev;
+
+    document.getElementById('listContas').innerHTML = state.contas.length ? state.contas.map(function(c){
+      var saldo = Engine.saldoConta(state, c.id, h);
+      return rowHtml({ id: c.id, title: escapeHtml(c.nome), meta: 'saldo inicial ' + fmt(c.saldoInicial) + ' em ' + dateBR(c.dataSaldoInicial),
+        amt: fmt(saldo), amtClass: saldo < 0 ? 'neg' : 'pos', paid: false, actions: [{label:'excluir', cls:'del', action:'del-conta'}] });
+    }).join('') : '<div class="empty">nenhuma conta cadastrada. Informe o saldo atual e a data para acompanhar o saldo real.</div>';
+
+    document.getElementById('conciliacao').innerHTML = state.contas.length ? state.contas.map(function(c){
+      var saved = state.reconciliacao[c.id], res = saved ? Engine.reconcile(state, c.id, saved.saldoBanco, h) : null, msg = '', cls = '';
+      if (res) {
+        cls = res.status === 'ok' ? 'ok' : res.status === 'pendentes' ? 'mid' : 'bad';
+        msg = 'Banco ' + fmt(res.saldoBanco) + ' (informado em ' + dateBR(saved.data) + ') · app ' + fmt(res.saldoApp) + ' · diferença ' + fmt(res.diferenca) + '. ' +
+          (res.status === 'ok' ? 'Saldos conferem.' : res.status === 'pendentes'
+            ? 'A diferença é explicada por ' + res.pendentes.qtd + ' lançamento(s) ainda não conferido(s) (' + fmt(res.pendentes.liquido) + ').'
+            : 'Sobra diferença de ' + fmt(res.diferencaConciliado) + ' que os lançamentos pendentes não explicam: confira os movimentos abaixo.');
+      }
+      return '<div class="rec-box" data-conta="' + escapeHtml(c.id) + '"><div class="t">' + escapeHtml(c.nome) + ' · saldo no app ' + fmt(Engine.saldoConta(state, c.id, h)) + '</div>' +
+        '<form class="rec"><label>Saldo informado pelo banco (R$)<input type="number" step="0.01" min="-999999999.99" max="999999999.99" required name="banco" value="' + (saved ? Engine.centsToInput(saved.saldoBanco) : '') + '"></label><button type="submit">Comparar</button></form>' +
+        (msg ? '<div class="rec-result ' + cls + '">' + escapeHtml(msg) + '</div>' : '') + '</div>';
+    }).join('') : '<div class="empty">cadastre uma conta para conciliar.</div>';
+
+    var movs = Engine.realizedMovements(state, h).slice(0, 80);
+    document.getElementById('listMovimentos').innerHTML = movs.length ? movs.map(function(m){
+      return rowHtml({ id: m.id, title: escapeHtml(m.descricao) + (m.conferido ? ' <span class="tag paid">conferido</span>' : ''),
+        meta: (m.tipo === 'entrada' ? 'entrada em ' : 'saída em ') + dateBR(m.data), amt: fmt(Math.abs(m.valor)), amtClass: m.tipo === 'entrada' ? 'pos' : 'neg', paid: false,
+        actions: [{label: m.conferido ? 'desmarcar' : 'conferir', cls: m.conferido ? '' : 'pay', action: 'conf-' + m.tipo}] });
+    }).join('') : '<div class="empty">nenhum movimento realizado desde o saldo inicial.</div>';
+  }
+
   function renderAll(){
     renderDespesas();
     renderEntradas();
     renderCartao();
     renderDividas();
+    renderConta();
     renderSummary();
   }
 
@@ -427,8 +467,27 @@
     var desc = document.getElementById('eDesc').value.trim();
     var data = document.getElementById('eData').value;
     if (!(valor > 0) || !desc || !data) return;
-    state.income.push(Engine.makeIncome({valor: valor, descricao: desc, data: data}));
+    state.income.push(Engine.makeIncome({valor: valor, descricao: desc, data: data, contaId: state.contas.length > 1 ? document.getElementById('eConta').value : ''}));
     this.reset();
+    save(); renderAll();
+  });
+
+  document.getElementById('formConta').addEventListener('submit', function(e){
+    e.preventDefault();
+    var saldo = Engine.parseCents(document.getElementById('kSaldo').value), data = document.getElementById('kData').value;
+    var nome = document.getElementById('kNome').value.trim();
+    if (saldo === null || Math.abs(saldo) > Engine.MAX_CENTS || !nome || !data) return;
+    Engine.addAccount(state, {nome: nome, saldoInicial: saldo, dataSaldoInicial: data});
+    this.reset(); document.getElementById('kData').value = hoje();
+    save(); renderAll();
+  });
+
+  document.getElementById('conciliacao').addEventListener('submit', function(e){
+    var form = e.target.closest('form.rec'); if (!form) return;
+    e.preventDefault();
+    var contaId = form.closest('.rec-box').dataset.conta, banco = Engine.parseCents(form.elements.banco.value);
+    if (banco === null || Math.abs(banco) > Engine.MAX_CENTS) return;
+    state.reconciliacao[contaId] = {saldoBanco: banco, data: hoje()};
     save(); renderAll();
   });
 
@@ -536,6 +595,13 @@
       if (!await askConfirm({title: 'Desfazer o último pagamento?', text: 'A parcela ' + ud.pagas[ud.pagas.length-1].parcela + ' volta a ficar em aberto e a despesa gerada é removida.', action: 'Desfazer', danger: true})) return;
       r = Engine.undoDebtPayment(state, id);
       if (!r.ok) { await showMessage('Não foi possível desfazer', r.erro); return; }
+    } else if (action === 'conf-entrada' || action === 'conf-saida') {
+      var tipoM = action === 'conf-entrada' ? 'entrada' : 'saida';
+      var alvo = tipoM === 'entrada' ? state.income.find(function(x){return x.id===id;}) : Engine.findExpense(state, id);
+      if (alvo) Engine.setConferido(state, tipoM, id, !alvo.conferido);
+    } else if (action === 'del-conta') {
+      if (!await askConfirm({title: 'Excluir esta conta?', text: 'Os lançamentos continuam existindo e passam a valer para a primeira conta.', action: 'Excluir', danger: true})) return;
+      Engine.removeAccount(state, id);
     } else if (action === 'del-debt') {
       if (!await askConfirm({title: 'Excluir esta dívida?', text: 'As despesas já geradas por parcelas pagas continuam em Despesas.', action: 'Excluir', danger: true})) return;
       state.debts = state.debts.filter(function(x){return x.id!==id;});
@@ -611,7 +677,7 @@
 
   // ---------- init ----------
   document.getElementById('dataHoje').textContent = new Date().toLocaleDateString('pt-BR', {day:'2-digit', month:'long', year:'numeric'});
-  ['dVenc','eData','ccData','vVenc'].forEach(function(id){
+  ['dVenc','eData','ccData','vVenc','kData'].forEach(function(id){
     var el = document.getElementById(id);
     if (el && !el.value) el.value = hoje();
   });
