@@ -45,3 +45,25 @@ test('monthKey / monthEnd / addMonthKey', () => {
   assert.equal(E.monthEnd('2026-02'), '2026-02-28');
   assert.equal(E.addMonthKey('2026-11', 3), '2027-02');
 });
+
+test('B2: "vence em breve" compara strings ISO locais, sem hora', () => {
+  assert.equal(E.dueStatus('2026-10-07', false, '2026-09-30'), 'em-breve');   // exatamente 7 dias
+  assert.equal(E.dueStatus('2026-10-08', false, '2026-09-30'), '');
+  assert.equal(E.dueStatus('2026-09-30', false, '2026-09-30'), 'em-breve');   // vence hoje (antes: dependia da hora)
+  assert.equal(E.dueStatus('2026-09-29', false, '2026-09-30'), 'atrasado');
+  assert.equal(E.dueStatus('2026-09-29', true, '2026-09-30'), 'pago');
+  assert.equal(E.dueStatus('', false, '2026-09-30'), '');
+});
+
+test('C1: regressão real — 21h30 em Brasília (00h30 UTC do dia seguinte)', () => {
+  const tzOriginal = process.env.TZ;
+  process.env.TZ = 'America/Sao_Paulo';
+  try {
+    const instante = new Date('2026-10-01T00:30:00Z');            // 30/09 21:30 em Brasília
+    assert.equal(instante.toISOString().slice(0, 10), '2026-10-01');   // o bug antigo devolvia o dia seguinte
+    assert.equal(E.hojeISO(instante), '2026-09-30');
+    assert.equal(E.addDays(E.hojeISO(instante), 10), '2026-10-10');
+  } finally {
+    if (tzOriginal === undefined) delete process.env.TZ; else process.env.TZ = tzOriginal;
+  }
+});
