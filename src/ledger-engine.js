@@ -432,6 +432,78 @@
     return { ok: true, devolvidos: f.itens.length };
   }
 
+  // ---------- contas, saldo real e conciliação (A2) ----------
+  function addAccount(state, o) {
+    var nome = safeText(o.nome) || 'Conta';
+    if (!isValidISO(o.dataSaldoInicial)) return { ok: false, erro: 'Informe a data do saldo inicial.' };
+    var saldo = safeSigned(o.saldoInicial, true);
+    var conta = { id: uid(), nome: nome, saldoInicial: saldo, dataSaldoInicial: o.dataSaldoInicial };
+    state.contas.push(conta);
+    return { ok: true, conta: conta };
+  }
+  function removeAccount(state, id) {
+    state.contas = state.contas.filter(function (c) { return c.id !== id; });
+    state.expenses.forEach(function (e) { if (e.contaId === id) e.contaId = ''; });
+    state.income.forEach(function (i) { if (i.contaId === id) i.contaId = ''; });
+    state.recorrencias.forEach(function (r) { if (r.contaId === id) r.contaId = ''; });
+    delete state.reconciliacao[id];
+  }
+  /** Conta a que o item pertence; itens sem conta valem para a primeira conta cadastrada. */
+  function contaDoItem(state, item) {
+    if (!state.contas.length) return '';
+    return state.contas.some(function (c) { return c.id === item.contaId; }) ? item.contaId : state.contas[0].id;
+  }
+  /** Movimentos realizados (entradas com data <= hoje e despesas pagas) a partir do saldo inicial da conta, mais recentes primeiro.
+   *  `valor` vem com sinal: entrada positiva, saída negativa. */
+  function realizedMovements(state, hoje, contaId) {
+    var out = [], contas = {};
+    state.contas.forEach(function (c) { contas[c.id] = c; });
+    state.income.forEach(function (i) {
+      var cid = contaDoItem(state, i), c = contas[cid];
+      if (!c || (contaId && cid !== contaId) || i.data < c.dataSaldoInicial || i.data > hoje) return;
+      out.push({ tipo: 'entrada', id: i.id, contaId: cid, data: i.data, descricao: i.descricao, valor: i.valor, conferido: !!i.conferido });
+    });
+    state.expenses.forEach(function (e) {
+      if (!e.pago) return;
+      var cid = contaDoItem(state, e), c = contas[cid];
+      if (!c || (contaId && cid !== contaId) || e.dataPagamento < c.dataSaldoInicial || e.dataPagamento > hoje) return;
+      out.push({ tipo: 'saida', id: e.id, contaId: cid, data: e.dataPagamento, descricao: e.descricao, valor: -(e.valorPago === null ? e.valor : e.valorPago), conferido: !!e.conferido });
+    });
+    return out.sort(function (a, b) { return b.data.localeCompare(a.data) || (a.id < b.id ? -1 : 1); });
+  }
+  /** Saldo atual = saldo inicial + entradas realizadas − saídas realizadas (desde a data do saldo inicial). */
+  function saldoConta(state, contaId, hoje) {
+    var c = state.contas.find(function (x) { return x.id === contaId; });
+    if (!c) return null;
+    return c.saldoInicial + sum(realizedMovements(state, hoje, contaId), function (m) { return m.valor; });
+  }
+  /** Saldo total das contas; null se ainda não há conta cadastrada. */
+  function saldoAtual(state, hoje) {
+    if (!state.contas.length) return null;
+    return sum(state.contas, function (c) { return saldoConta(state, c.id, hoje); });
+  }
+  function setConferido(state, tipo, id, valor) {
+    var item = tipo === 'entrada' ? state.income.find(function (x) { return x.id === id; }) : findExpense(state, id);
+    if (!item || (tipo !== 'entrada' && !item.pago)) return false;
+    item.conferido = !!valor; return true;
+  }
+  /** Compara o saldo informado pelo banco com o do app.
+   *  status: "ok" (bate), "pendentes" (a diferença some se todos os lançamentos pendentes de conferência já constarem no banco),
+   *  "divergente" (sobra diferença que não se explica pelos pendentes). */
+  function reconcile(state, contaId, saldoBanco, hoje) {
+    var c = state.contas.find(function (x) { return x.id === contaId; });
+    if (!c) return { ok: false, erro: 'Conta não encontrada.' };
+    var movs = realizedMovements(state, hoje, contaId);
+    var app = c.saldoInicial + sum(movs, function (m) { return m.valor; });
+    var conciliado = c.saldoInicial + sum(movs.filter(function (m) { return m.conferido; }), function (m) { return m.valor; });
+    var pend = movs.filter(function (m) { return !m.conferido; });
+    var status = saldoBanco === app ? 'ok' : saldoBanco === conciliado ? 'pendentes' : 'divergente';
+    return {
+      ok: true, saldoApp: app, saldoBanco: saldoBanco, diferenca: saldoBanco - app, saldoConciliado: conciliado,
+      diferencaConciliado: saldoBanco - conciliado, pendentes: { qtd: pend.length, liquido: sum(pend, function (m) { return m.valor; }) }, status: status
+    };
+  }
+
   // ---------- resumo do mês: caixa x competência (A1) ----------
   /** Resumo de um mês. `caixa` = o que de fato entrou/saiu (data de pagamento); `previsto` = vencimentos do mês
    *  (competência); `atrasoAnterior` = em aberto de meses anteriores. Todos em centavos. */
@@ -470,6 +542,8 @@
     dateBR: dateBR, signedValor: signedValor, closingDateFor: closingDateFor, dueDateFor: dueDateFor, openCycles: openCycles,
     faturaDespesa: faturaDespesa, faturaEmAberto: faturaEmAberto, cardOpenTotal: cardOpenTotal, cardInvoicesUnpaid: cardInvoicesUnpaid,
     cardUsed: cardUsed, cardAvailable: cardAvailable, splitInstallments: splitInstallments, addCardPurchase: addCardPurchase,
-    closeInvoice: closeInvoice, reopenInvoice: reopenInvoice, deleteCardItem: deleteCardItem
+    closeInvoice: closeInvoice, reopenInvoice: reopenInvoice, deleteCardItem: deleteCardItem,
+    addAccount: addAccount, removeAccount: removeAccount, contaDoItem: contaDoItem, realizedMovements: realizedMovements,
+    saldoConta: saldoConta, saldoAtual: saldoAtual, setConferido: setConferido, reconcile: reconcile
   };
 });
