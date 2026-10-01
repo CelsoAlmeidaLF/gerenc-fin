@@ -17,11 +17,12 @@
     projectId: 'systekna-feedback',
     appId: '1:870927975015:web:0576bd5e3cdd8d067d8ac2',
   };
-  // Opcional: chave de site reCAPTCHA v3 para o App Check (bloqueia robôs). Deixe '' para desativar.
-  const RECAPTCHA_SITE_KEY = '';
+  // App Check com reCAPTCHA Enterprise (bloqueia robôs). Chave de site do projeto; deixe '' para desativar.
+  // Domínios da chave: celsoalmeidalf.github.io, financ-apps.github.io, localhost.
+  const RECAPTCHA_SITE_KEY = '6LehydgtAAAAAOqkwKOQPzg2m0CZwYTRZSXPeyyx';
   const SDK = 'https://www.gstatic.com/firebasejs/10.14.1/';
 
-  const APPS = ['CRIPTO', 'LIVROCAIXA', 'CAMBIO', 'DESPESAS', 'LAUNCHER', 'TAXOMETRO', 'DEMO'];
+  const APPS = ['CRIPTO', 'LIVROCAIXA', 'CAMBIO', 'DESPESAS', 'LAUNCHER', 'TAXOMETRO'];
   const TIPOS = ['sugestao', 'problema', 'elogio'];
 
   // ───────────── BACKEND (Firebase) ─────────────
@@ -35,7 +36,7 @@
         if (RECAPTCHA_SITE_KEY) {
           const ac = await import(SDK + 'firebase-app-check.js');
           ac.initializeAppCheck(app, {
-            provider: new ac.ReCaptchaV3Provider(RECAPTCHA_SITE_KEY),
+            provider: new ac.ReCaptchaEnterpriseProvider(RECAPTCHA_SITE_KEY),
             isTokenAutoRefreshEnabled: true,
           });
         }
