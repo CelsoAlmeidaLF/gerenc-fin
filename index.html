@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="pt-BR" class="vault-locked" data-vault-version="1.8.0" data-vault-app="gerenc-fin" data-vault-name="Livro-Caixa">
+<html lang="pt-BR" class="vault-locked" data-vault-version="1.9.0" data-vault-app="gerenc-fin" data-vault-name="Livro-Caixa">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; worker-src 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://www.gstatic.com; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self' https://firestore.googleapis.com; img-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; worker-src 'self'">
 <meta name="referrer" content="no-referrer">
 <title>Livro-Caixa</title>
 <link rel="manifest" href="manifest.json">
@@ -355,6 +355,7 @@
   nav.tabs button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; white-space: nowrap; }
 </style>
 <link rel="stylesheet" href="secure-ui.css">
+<link rel="stylesheet" href="apoio/apoio.css" id="dz-style">
 </head>
 <body class="locked">
 <div id="securityGate"><h2>Dados protegidos</h2><p>Conclua a migração dos dados antigos. Se necessário, importe o certificado anterior e recarregue esta página.</p><button id="gateImportCert"><i data-icon="shield-check" data-size="14"></i> Importar certificado digital</button> <button id="gateRecover"><i data-icon="key" data-size="14"></i> Recuperar acesso</button><input id="gateCertFile" type="file" accept="application/json"><div id="gateStatus"></div></div>
@@ -543,6 +544,8 @@
 <script src="secure-ui.js"></script>
 <script src="ledger-engine.js"></script>
 <script src="app.js"></script>
+<script src="apoio/feedback.js"></script>
+<script src="apoio/doacao.js" data-app="LIVROCAIXA" data-flutuante="false"></script>
 
 </body>
 </html>

@@ -1,0 +1,65 @@
+/* apoio.css — painel Apoiar · Avaliar · Sugerir (Design System — Registro Evolutivo) */
+
+.dz-root{--dz-bg:#0E1210;--dz-surface:#171D1A;--dz-surface-2:#202824;--dz-line:#2C3733;
+--dz-ink:#EAF0EC;--dz-dim:#8FA098;--dz-accent:#6FCF97;--dz-warn:#E0C185;--dz-down:#E08585;
+font-family:'Space Grotesk',system-ui,sans-serif;color:var(--dz-ink)}
+.dz-root *{box-sizing:border-box}
+.dz-fab{position:fixed;right:16px;bottom:calc(16px + env(safe-area-inset-bottom,0px));z-index:9998;
+font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12.5px;font-weight:600;
+background:var(--dz-surface-2);color:var(--dz-accent);border:1px solid var(--dz-line);
+border-radius:999px;padding:10px 16px;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.35)}
+.dz-root button:focus-visible,.dz-root input:focus-visible,.dz-root textarea:focus-visible{outline:2px solid var(--dz-accent);outline-offset:2px}
+.dz-overlay{position:fixed;inset:0;z-index:9999;background:rgba(5,8,6,.7);display:flex;align-items:flex-end;justify-content:center}
+.dz-sheet{width:100%;max-width:440px;max-height:92vh;overflow-y:auto;background:var(--dz-surface);
+border:1px solid var(--dz-line);border-bottom:none;border-radius:20px 20px 0 0;
+padding:10px 18px calc(22px + env(safe-area-inset-bottom,0px));animation:dz-up .22s ease-out}
+@media (min-width:600px){.dz-overlay{align-items:center}.dz-sheet{border-radius:20px;border-bottom:1px solid var(--dz-line)}}
+@keyframes dz-up{from{transform:translateY(24px);opacity:0}to{transform:none;opacity:1}}
+@media (prefers-reduced-motion:reduce){.dz-sheet{animation:none}.dz-star{transition:none}}
+.dz-grip{width:36px;height:4px;border-radius:2px;background:var(--dz-line);margin:0 auto 12px}
+.dz-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px}
+.dz-tabs{display:flex;gap:18px}
+.dz-tabs button{background:none;border:none;border-bottom:2px solid transparent;color:var(--dz-dim);
+font-family:'Space Grotesk',sans-serif;font-size:16px;font-weight:600;padding:4px 0 6px;cursor:pointer}
+.dz-tabs button[aria-selected="true"]{color:var(--dz-ink);border-bottom-color:var(--dz-accent)}
+.dz-close{background:none;border:none;color:var(--dz-dim);font-size:22px;line-height:1;cursor:pointer;padding:2px 6px}
+.dz-text{font-size:13.5px;line-height:1.5;color:var(--dz-dim);margin:0 0 16px}
+.dz-seg{display:grid;grid-template-columns:1fr 1fr;background:var(--dz-bg);border:1px solid var(--dz-line);border-radius:999px;padding:3px;margin-bottom:16px}
+.dz-seg button{font-family:'IBM Plex Mono',monospace;font-size:12.5px;border:none;background:none;color:var(--dz-dim);padding:8px;border-radius:999px;cursor:pointer}
+.dz-seg button[aria-selected="true"]{background:var(--dz-surface-2);color:var(--dz-ink);font-weight:600}
+.dz-label{display:block;font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--dz-dim);margin-bottom:8px}
+.dz-chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+.dz-chip{font-family:'IBM Plex Mono',monospace;font-size:13px;padding:8px 14px;border-radius:999px;cursor:pointer;
+background:var(--dz-surface-2);color:var(--dz-ink);border:1px solid var(--dz-line)}
+.dz-chip[aria-pressed="true"]{background:rgba(111,207,151,.15);border-color:var(--dz-accent);color:var(--dz-accent)}
+.dz-field{margin-bottom:12px}
+.dz-field input,.dz-field textarea{width:100%;background:var(--dz-surface-2);border:1px solid var(--dz-line);border-radius:8px;
+color:var(--dz-ink);font-family:'IBM Plex Mono',monospace;font-size:14px;padding:10px 12px}
+.dz-field textarea{min-height:110px;resize:vertical;line-height:1.5}
+.dz-hint{display:flex;justify-content:space-between;font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--dz-dim);margin-top:6px}
+.dz-trap{position:absolute;left:-9999px;width:1px;height:1px;opacity:0}
+.dz-qr{background:#fff;border-radius:14px;padding:12px;width:220px;max-width:100%;aspect-ratio:1;margin:6px auto 14px;display:flex;align-items:center;justify-content:center}
+.dz-qr svg{width:100%;height:auto;display:block}
+.dz-qr-msg{font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#4a5a52;text-align:center;padding:10px}
+.dz-btn{width:100%;font-family:'IBM Plex Mono',monospace;font-size:14px;font-weight:600;padding:13px;border:none;
+border-radius:999px;background:var(--dz-accent);color:var(--dz-bg);cursor:pointer}
+.dz-btn:disabled{opacity:.45;cursor:default}
+.dz-btn.done{background:var(--dz-surface-2);color:var(--dz-accent);border:1px solid var(--dz-accent)}
+.dz-meta{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--dz-dim);text-align:center;margin-top:10px;line-height:1.6}
+.dz-addr{font-family:'IBM Plex Mono',monospace;font-size:13px;line-height:1.7;text-align:center;word-spacing:4px;
+background:var(--dz-bg);border:1px solid var(--dz-line);border-radius:10px;padding:10px 12px;margin-bottom:10px}
+.dz-note{font-size:12px;line-height:1.5;color:var(--dz-warn);margin:0 0 12px;text-align:center}
+.dz-avg{display:flex;align-items:baseline;gap:10px;background:var(--dz-bg);border:1px solid var(--dz-line);border-radius:12px;padding:12px 14px;margin-bottom:18px}
+.dz-avg b{font-size:28px;font-weight:700;color:var(--dz-accent)}
+.dz-avg span{font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--dz-dim)}
+.dz-stars{display:flex;justify-content:center;gap:6px;margin-bottom:6px}
+.dz-star{background:none;border:none;cursor:pointer;font-size:38px;line-height:1;color:var(--dz-line);padding:2px 4px;transition:transform .12s,color .12s}
+.dz-star.on{color:var(--dz-accent)}
+.dz-star:active{transform:scale(.9)}
+.dz-stars.lock .dz-star{cursor:default}
+.dz-star-label{text-align:center;font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--dz-dim);min-height:18px;margin-bottom:16px}
+.dz-status{font-family:'IBM Plex Mono',monospace;font-size:12px;text-align:center;margin-top:10px;min-height:16px;color:var(--dz-dim)}
+.dz-status.ok{color:var(--dz-accent)} .dz-status.err{color:var(--dz-down)}
+.dz-card{background:var(--dz-surface);border:1px solid var(--dz-line);border-radius:16px;padding:18px;margin-bottom:16px}
+.dz-card-title{font-size:17px;font-weight:700;margin:0 0 12px}
+.dz-hidden{display:none!important}
