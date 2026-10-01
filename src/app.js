@@ -9,42 +9,20 @@
   var SECURITY_DATA_KEY = "livro_caixa_secure_data_v1";
   var SECURITY_RECOVERY_KEY = "livro_caixa_recovery_data_v1";
   var DEVICE_CERT_KEY = "livro_caixa_device_cert_v1";
-  var todayISO = new Date().toISOString().slice(0,10);
+  var Engine = window.LedgerEngine;
+  // Data local recalculada a cada uso (C1, M7): nunca congelada na abertura e nunca em UTC.
+  function hoje(){ return Engine.hojeISO(); }
 
-  var state = {
-    expenses: [],   // {id, valor, descricao, vencimento, pago, dataPagamento}
-    income: [],     // {id, valor, descricao, data}
-    card: { limite: 0, fechamento: 1, lancamentos: [], faturas: [] }, // lancamentos:{id,valor,descricao,data}; faturas:{id,total,dataFechamento,despesaId}
-    debts: []       // {id, valorParcela, descricao, parcelas, parcelaAtual, vencimento, pago}
-  };
+  var state = Engine.freshState();
 
-  function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
-
-  function fmt(v){
-    v = Number(v)||0;
-    return v.toLocaleString('pt-BR', {style:'currency', currency:'BRL'});
-  }
+  function uid(){ return Engine.uid(); }
+  // Todos os valores do estado são centavos inteiros; só formatamos na exibição (A6).
+  function fmt(cents){ return Engine.fmtBRL(cents); }
 
   function b64(bytes){ var s=''; for(var i=0;i<bytes.length;i++) s+=String.fromCharCode(bytes[i]); return btoa(s); }
   function fromB64(s){ var raw=atob(s), out=new Uint8Array(raw.length); for(var i=0;i<raw.length;i++) out[i]=raw.charCodeAt(i); return out; }
-  function freshState(){ return { expenses: [], income: [], card: { limite:0, fechamento:1, lancamentos:[], faturas:[] }, debts: [] }; }
-  function safeId(value){ return String(value || uid()).replace(/[^a-zA-Z0-9_-]/g, '').slice(0,80) || uid(); }
-  function safeText(value){ return String(value || '').replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0,200); }
-  function safeAmount(value){ var n=Number(value); return Number.isFinite(n) && n >= 0 && n <= 1e15 ? n : 0; }
-  function safeDate(value){ var text=String(value || ''); return /^\d{4}-\d{2}-\d{2}$/.test(text) && !Number.isNaN(Date.parse(text+'T00:00:00')) ? text : ''; }
-  function normalizeState(parsed){
-    var source=parsed && typeof parsed==='object' && !Array.isArray(parsed) ? parsed : {};
-    var card=source.card && typeof source.card==='object' ? source.card : {};
-    var list=function(value){ return Array.isArray(value) ? value.slice(0,10000) : []; };
-    state=freshState();
-    state.expenses=list(source.expenses).map(function(x){ return {id:safeId(x.id),valor:safeAmount(x.valor),descricao:safeText(x.descricao),vencimento:safeDate(x.vencimento),pago:x.pago===true,dataPagamento:safeDate(x.dataPagamento)||null}; }).filter(function(x){return x.descricao&&x.vencimento;});
-    state.income=list(source.income).map(function(x){ return {id:safeId(x.id),valor:safeAmount(x.valor),descricao:safeText(x.descricao),data:safeDate(x.data)}; }).filter(function(x){return x.descricao&&x.data;});
-    state.card.limite=safeAmount(card.limite);
-    state.card.fechamento=Math.min(31,Math.max(1,Math.trunc(Number(card.fechamento)||1)));
-    state.card.lancamentos=list(card.lancamentos).map(function(x){ return {id:safeId(x.id),valor:safeAmount(x.valor),descricao:safeText(x.descricao),data:safeDate(x.data)}; }).filter(function(x){return x.descricao&&x.data;});
-    state.card.faturas=list(card.faturas).map(function(x){ return {id:safeId(x.id),total:safeAmount(x.total),dataFechamento:safeDate(x.dataFechamento),despesaId:safeId(x.despesaId)}; }).filter(function(x){return x.dataFechamento;});
-    state.debts=list(source.debts).map(function(x){ var parcelas=Math.min(1200,Math.max(1,Math.trunc(Number(x.parcelas)||1))); return {id:safeId(x.id),valorParcela:safeAmount(x.valorParcela),descricao:safeText(x.descricao),parcelas:parcelas,parcelaAtual:Math.min(parcelas,Math.max(1,Math.trunc(Number(x.parcelaAtual)||1))),vencimento:safeDate(x.vencimento),pago:x.pago===true}; }).filter(function(x){return x.descricao&&x.vencimento;});
-  }
+  function freshState(){ return Engine.freshState(); }
+  function normalizeState(parsed){ state = Engine.normalizeState(parsed); }
   // Com o PIN FINANC, o certificado é o FINANC (um só para todos os apps; o kit já trouxe o antigo deste app).
   // Sem ele (app ainda com PIN próprio), segue o certificado próprio guardado no cofre do app.
   var FinancCert = window.FinancCert;
@@ -91,7 +69,12 @@
 
   async function load(){
     const current = localStorage.getItem(STATE_KEY);
-    if (current) normalizeState(JSON.parse(current));
+    if (current) {
+      var parsedCurrent = JSON.parse(current);
+      normalizeState(parsedCurrent);
+      // Estado salvo no formato antigo (reais/float): grava já migrado para centavos (schema 2).
+      if (!(Number(parsedCurrent && parsedCurrent.schemaVersion) >= 2)) await save();
+    }
     else {
       const metaRaw = localStorage.getItem(SECURITY_META_KEY);
       const secureRaw = localStorage.getItem(SECURITY_DATA_KEY);
@@ -132,21 +115,83 @@
   }
   function escapeHtml(value) { return String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
+  // ---------- diálogos (mesmo padrão modal do app: <dialog class="vault-dialog">) ----------
+  function iconSvg(name, size){ return window.FinancIcons ? window.FinancIcons.svg(name, {size:size}) : ''; }
+  function dialogBox(build){
+    return new Promise(function(resolve){
+      var dialog = document.createElement('dialog'); dialog.className = 'vault-dialog';
+      var result = null;
+      build(dialog, function(value){ result = value; dialog.close(); });
+      dialog.onclose = function(){ dialog.remove(); resolve(result); };
+      document.body.append(dialog); dialog.showModal();
+    });
+  }
+  function dialogHead(title, text, iconName, danger){
+    var head = document.createElement('div'); head.className = 'vault-dialog-head';
+    head.innerHTML = '<span class="vault-badge' + (danger ? ' vault-badge-danger' : '') + '">' + iconSvg(iconName || 'info', 18) + '</span>';
+    var p = document.createElement('p'); var b = document.createElement('b'); b.textContent = title; p.append(b); head.append(p);
+    var frag = [head];
+    if (text) { var t = document.createElement('p'); t.className = 'vault-dim'; t.textContent = text; frag.push(t); }
+    return frag;
+  }
+  function askConfirm(o){
+    return dialogBox(function(dialog, close){
+      var actions = document.createElement('div'); actions.className = 'vault-dialog-actions';
+      var no = document.createElement('button'); no.type = 'button'; no.textContent = o.cancel || 'Cancelar'; no.onclick = function(){ close(false); };
+      var yes = document.createElement('button'); yes.type = 'button'; yes.textContent = o.action || 'Confirmar';
+      yes.className = o.danger ? 'vault-dialog-danger' : 'vault-dialog-primary'; yes.onclick = function(){ close(true); };
+      actions.append(no, yes);
+      dialog.append.apply(dialog, dialogHead(o.title, o.text, o.danger ? 'alert' : 'info', o.danger).concat([actions]));
+    }).then(function(v){ return v === true; });
+  }
+  function showMessage(title, text, danger){
+    return dialogBox(function(dialog, close){
+      var actions = document.createElement('div'); actions.className = 'vault-dialog-actions';
+      var ok = document.createElement('button'); ok.type = 'button'; ok.className = 'vault-dialog-primary'; ok.textContent = 'Entendi'; ok.onclick = function(){ close(true); };
+      actions.append(ok);
+      dialog.append.apply(dialog, dialogHead(title, text, danger === false ? 'info' : 'alert', danger !== false).concat([actions]));
+    });
+  }
+  /** Modal de baixa: data, valor efetivamente pago (e conta, se houver mais de uma). Resolve {data, valorPago, contaId} ou null. */
+  function askPayment(o){
+    return dialogBox(function(dialog, close){
+      var form = document.createElement('form'); form.method = 'dialog'; form.className = 'pay-form';
+      var contas = state.contas.length > 1 ? '<label>Conta<select name="conta">' + state.contas.map(function(c){ return '<option value="' + escapeHtml(c.id) + '">' + escapeHtml(c.nome) + '</option>'; }).join('') + '</select></label>' : '';
+      form.innerHTML = '<label>Data do pagamento<input type="date" name="data" required max="' + hoje() + '" value="' + hoje() + '"></label>' +
+        '<label>Valor pago (R$)<input type="number" name="valor" step="0.01" min="0.01" max="999999999.99" required value="' + Engine.centsToInput(o.valor) + '"></label>' + contas +
+        '<p class="vault-dim pay-diff" aria-live="polite"></p>';
+      var diff = form.querySelector('.pay-diff'), inValor = form.elements.valor;
+      var update = function(){
+        var c = Engine.parseCents(inValor.value); var d = c === null ? 0 : c - o.valor;
+        diff.textContent = d > 0 ? 'Diferença de ' + fmt(d) + ' será registrada como juros/multa.' : d < 0 ? 'Diferença de ' + fmt(-d) + ' será registrada como desconto.' : '';
+      };
+      inValor.addEventListener('input', update);
+      var actions = document.createElement('div'); actions.className = 'vault-dialog-actions';
+      var no = document.createElement('button'); no.type = 'button'; no.textContent = 'Cancelar'; no.onclick = function(){ close(null); };
+      var yes = document.createElement('button'); yes.type = 'submit'; yes.textContent = o.action || 'Confirmar pagamento';
+      actions.append(no, yes); form.append(actions);
+      form.onsubmit = function(ev){
+        ev.preventDefault();
+        var c = Engine.parseCents(inValor.value);
+        if (!(c > 0) || c > Engine.MAX_CENTS) { inValor.setCustomValidity('Informe um valor válido.'); inValor.reportValidity(); return; }
+        close({ data: form.elements.data.value, valorPago: c, contaId: form.elements.conta ? form.elements.conta.value : undefined });
+      };
+      inValor.addEventListener('input', function(){ inValor.setCustomValidity(''); });
+      dialog.append.apply(dialog, dialogHead(o.title, o.text, 'check').concat([form]));
+      update();
+    });
+  }
+
   // ---------- render helpers ----------
   function dueTag(venc, pago){
-    if (pago) return '<span class="tag paid">pago</span>';
-    if (!venc) return '';
-    if (venc < todayISO) return '<span class="tag overdue">atrasado</span>';
-    var in7 = new Date(); in7.setDate(in7.getDate()+7);
-    if (new Date(venc+'T00:00:00') <= in7) return '<span class="tag due-soon">vence em breve</span>';
+    var st = Engine.dueStatus(venc, pago, hoje());
+    if (st === 'pago') return '<span class="tag paid">pago</span>';
+    if (st === 'atrasado') return '<span class="tag overdue">atrasado</span>';
+    if (st === 'em-breve') return '<span class="tag due-soon">vence em breve</span>';
     return '';
   }
 
-  function dateBR(iso){
-    if(!iso) return '';
-    var p = iso.split('-');
-    return p[2]+'/'+p[1]+'/'+p[0];
-  }
+  function dateBR(iso){ return Engine.dateBR(iso); }
 
   function rowHtml(opts){
     // opts: {title, meta, amt, amtClass, paid, actions: [{label,cls,action}]}
@@ -168,7 +213,7 @@
       return rowHtml({
         id: x.id,
         title: escapeHtml(x.descricao) + dueTag(x.vencimento, false),
-        meta: 'vence em ' + dateBR(x.vencimento),
+        meta: 'vence em ' + dateBR(x.vencimento) + ' · ' + escapeHtml(x.categoria) + (x.natureza === 'fixa' ? ' · fixa' : '') + (x.origem && x.origem.tipo === 'fatura' ? ' · fatura do cartão' : ''),
         amt: fmt(x.valor),
         amtClass: 'neg',
         paid: false,
@@ -180,14 +225,16 @@
     }).join('') : '<div class="empty">nenhuma despesa em aberto.</div>';
 
     document.getElementById('listDespesasPagas').innerHTML = pagas.length ? pagas.map(function(x){
+      var aj = Engine.expenseAjuste(x);
+      var ajTxt = aj > 0 ? ' · pago ' + fmt(x.valorPago) + ' (juros/multa ' + fmt(aj) + ')' : aj < 0 ? ' · pago ' + fmt(x.valorPago) + ' (desconto ' + fmt(-aj) + ')' : '';
       return rowHtml({
         id: x.id,
         title: escapeHtml(x.descricao),
-        meta: 'pago em ' + dateBR(x.dataPagamento),
+        meta: 'pago em ' + dateBR(x.dataPagamento) + ajTxt,
         amt: fmt(x.valor),
         amtClass: '',
         paid: true,
-        actions: [{label:'excluir', cls:'del', action:'del-expense'}]
+        actions: [{label:'estornar', cls:'', action:'unpay-expense'}, {label:'excluir', cls:'del', action:'del-expense'}]
       });
     }).join('') : '<div class="empty">nenhuma despesa paga ainda.</div>';
   }
@@ -198,7 +245,7 @@
       return rowHtml({
         id: x.id,
         title: escapeHtml(x.descricao),
-        meta: dateBR(x.data),
+        meta: dateBR(x.data) + ' · ' + escapeHtml(x.categoria),
         amt: fmt(x.valor),
         amtClass: 'pos',
         paid: false,
@@ -207,18 +254,16 @@
     }).join('') : '<div class="empty">nenhuma entrada lançada.</div>';
   }
 
-  function cardUsedTotal(){
-    return state.card.lancamentos.reduce(function(s,x){return s + Number(x.valor);}, 0);
-  }
-
   function renderCartao(){
-    document.getElementById('cLimite').value = state.card.limite || '';
-    document.getElementById('cFechamento').value = state.card.fechamento || '';
+    var c = state.card;
+    document.getElementById('cLimite').value = c.limite ? Engine.centsToInput(c.limite) : '';
+    document.getElementById('cFechamento').value = c.fechamento || '';
+    document.getElementById('cVencimento').value = c.vencimentoDia || '';
 
-    var usado = cardUsedTotal();
-    var limite = Number(state.card.limite)||0;
+    var usado = Engine.cardUsed(state);
+    var limite = c.limite;
     var pct = limite > 0 ? Math.min(100, (usado/limite)*100) : 0;
-    var disponivel = Math.max(0, limite - usado);
+    var disponivel = Engine.cardAvailable(state);
 
     document.getElementById('cartaoUsadoLabel').textContent = fmt(usado);
     document.getElementById('cartaoLimiteLabel').textContent = fmt(limite);
@@ -231,57 +276,75 @@
     else if (pct >= 70) bar.classList.add('warn');
 
     document.getElementById('cartaoConfigInfo').innerHTML =
-      'fechamento todo dia <b>' + (state.card.fechamento||'-') + '</b> &nbsp;·&nbsp; disponível <b>' + fmt(disponivel) + '</b>';
+      'fecha todo dia <b>' + (c.fechamento||'-') + '</b> &nbsp;·&nbsp; vence dia <b>' + (c.vencimentoDia||'-') + '</b> &nbsp;·&nbsp; disponível <b>' + fmt(disponivel) + '</b>' +
+      '<span>em aberto <b>' + fmt(Math.max(0, Engine.cardOpenTotal(state))) + '</b> &nbsp;·&nbsp; faturas a pagar <b>' + fmt(Engine.cardInvoicesUnpaid(state)) + '</b></span>';
 
-    var abertos = state.card.lancamentos.slice().sort(function(a,b){return b.data.localeCompare(a.data);});
-    document.getElementById('listCartaoAberto').innerHTML = abertos.length ? abertos.map(function(x){
-      return rowHtml({
-        id: x.id,
-        title: escapeHtml(x.descricao),
-        meta: dateBR(x.data),
-        amt: fmt(x.valor),
+    var h = hoje();
+    var ciclos = Engine.openCycles(state);
+    document.getElementById('listCartaoAberto').innerHTML = ciclos.length ? ciclos.map(function(cy){
+      var podeFechar = cy.fechamento <= h;
+      var head = rowHtml({
+        id: cy.fechamento,
+        title: (podeFechar ? 'fatura fechada em ' : 'fatura que fecha em ') + dateBR(cy.fechamento),
+        meta: 'vence em ' + dateBR(cy.vencimento) + ' · ' + cy.itens.length + ' lançamento(s)' + (podeFechar ? '' : ' · ainda aberta'),
+        amt: fmt(Math.max(0, cy.total)),
         amtClass: 'neg',
         paid: false,
-        actions: [{label:'excluir', cls:'del', action:'del-card-item'}]
-      });
-    }).join('') : '<div class="empty">nenhum lançamento no ciclo atual.</div>';
+        actions: podeFechar ? [{label:'gerar despesa da fatura', cls:'pay', action:'close-invoice'}] : []
+      }).replace('class="row"', 'class="row cycle"');
+      var itens = cy.itens.slice().sort(function(a,b){return b.data.localeCompare(a.data);}).map(function(x){
+        var cred = x.tipo === 'credito';
+        return rowHtml({
+          id: x.id,
+          title: escapeHtml(x.descricao) + (x.parcelas > 1 ? ' · parcela ' + x.parcelaAtual + '/' + x.parcelas : '') + (cred ? ' <span class="tag paid">crédito</span>' : ''),
+          meta: dateBR(x.data) + ' · ' + escapeHtml(x.categoria),
+          amt: (cred ? '− ' : '') + fmt(x.valor),
+          amtClass: cred ? 'pos' : 'neg',
+          paid: false,
+          actions: [{label:'excluir', cls:'del', action:'del-card-item'}]
+        }).replace('class="row"', 'class="row item"');
+      }).join('');
+      return head + itens;
+    }).join('') : '<div class="empty">nenhum lançamento em aberto no cartão.</div>';
 
-    var faturas = state.card.faturas.slice().sort(function(a,b){return b.dataFechamento.localeCompare(a.dataFechamento);});
+    var faturas = c.faturas.slice().sort(function(a,b){return b.dataFechamento.localeCompare(a.dataFechamento);});
     document.getElementById('listFaturas').innerHTML = faturas.length ? faturas.map(function(f){
-      var despesa = state.expenses.find(function(e){return e.id === f.despesaId;});
-      var pago = despesa ? despesa.pago : false;
+      var despesa = Engine.faturaDespesa(state, f);
+      var pago = despesa ? despesa.pago : true;
+      var acts = despesa && !despesa.pago ? [{label:'reabrir', cls:'', action:'reopen-invoice'}] : [];
       return rowHtml({
         id: f.id,
-        title: 'fatura fechada em ' + dateBR(f.dataFechamento) + (pago ? ' <span class="tag paid">paga</span>' : ' <span class="tag due-soon">a pagar</span>'),
+        title: 'fatura fechada em ' + dateBR(f.dataFechamento) + (!despesa ? ' <span class="tag paid">sem valor a pagar</span>' : pago ? ' <span class="tag paid">paga</span>' : ' <span class="tag due-soon">a pagar</span>'),
         meta: despesa ? ('lançada em Despesas · vence ' + dateBR(despesa.vencimento)) : 'sem despesa vinculada',
         amt: fmt(f.total),
         amtClass: pago ? '' : 'neg',
         paid: pago,
-        actions: []
+        actions: acts
       });
     }).join('') : '<div class="empty">nenhuma fatura fechada ainda.</div>';
-  }
-
-  function debtRemaining(d){
-    return d.parcelas - d.parcelaAtual + 1;
   }
 
   function renderDividas(){
     var abertas = state.debts.filter(function(d){return !d.pago;}).sort(function(a,b){return a.vencimento.localeCompare(b.vencimento);});
     var quitadas = state.debts.filter(function(d){return d.pago;});
+    var total = Engine.debtSaldoTotal(state);
+    document.getElementById('dividasTotal').textContent = abertas.length ? 'saldo devedor total (nominal): ' + fmt(total) : '';
 
     document.getElementById('listDividasAbertas').innerHTML = abertas.length ? abertas.map(function(d){
+      var extra = '';
+      if (d.valorContratado) extra += ' · contratado ' + fmt(d.valorContratado);
+      if (d.taxa !== null) extra += ' · taxa ' + String(d.taxa).replace('.', ',') + '% a.m.';
+      var acts = [{label:'pagar parcela', cls:'pay', action:'pay-debt'}];
+      if (d.pagas.length) acts.push({label:'desfazer', cls:'', action:'undo-debt'});
+      acts.push({label:'excluir', cls:'del', action:'del-debt'});
       return rowHtml({
         id: d.id,
         title: escapeHtml(d.descricao) + ' · parcela ' + d.parcelaAtual + '/' + d.parcelas + dueTag(d.vencimento,false),
-        meta: 'próximo vencimento ' + dateBR(d.vencimento),
+        meta: 'próximo vencimento ' + dateBR(d.vencimento) + ' · saldo devedor ' + fmt(Engine.debtSaldo(d)) + ' (' + Engine.debtRemainingCount(d) + ' parcela(s))' + extra,
         amt: fmt(d.valorParcela),
         amtClass: 'neg',
         paid: false,
-        actions: [
-          {label:'pagar parcela', cls:'pay', action:'pay-debt'},
-          {label:'excluir', cls:'del', action:'del-debt'}
-        ]
+        actions: acts
       });
     }).join('') : '<div class="empty">nenhuma dívida em aberto.</div>';
 
@@ -289,27 +352,118 @@
       return rowHtml({
         id: d.id,
         title: escapeHtml(d.descricao),
-        meta: d.parcelas + ' parcela(s) quitada(s)',
+        meta: d.parcelas + ' parcela(s) quitada(s) · total nominal (parcelas × valor)',
         amt: fmt(d.valorParcela * d.parcelas),
         amtClass: '',
         paid: true,
-        actions: [{label:'excluir', cls:'del', action:'del-debt'}]
+        actions: [{label:'desfazer', cls:'', action:'undo-debt'}, {label:'excluir', cls:'del', action:'del-debt'}].filter(function(a){ return a.action !== 'undo-debt' || d.pagas.length; })
       });
     }).join('') : '<div class="empty">nenhuma dívida quitada ainda.</div>';
   }
 
-  function monthKey(iso){ return iso ? iso.slice(0,7) : ''; }
 
+  function setSaldoColor(el, cents){ el.style.color = cents < 0 ? 'var(--rust)' : 'var(--green)'; }
   function renderSummary(){
-    var mk = todayISO.slice(0,7);
-    var entradasMes = state.income.filter(function(x){return monthKey(x.data)===mk;}).reduce(function(s,x){return s+Number(x.valor);},0);
-    var despesasMes = state.expenses.filter(function(x){return monthKey(x.vencimento)===mk;}).reduce(function(s,x){return s+Number(x.valor);},0);
-    document.getElementById('sumEntradas').textContent = fmt(entradasMes);
-    document.getElementById('sumDespesas').textContent = fmt(despesasMes);
-    var saldo = entradasMes - despesasMes;
+    var r = Engine.monthSummary(state, hoje());
+    document.getElementById('sumEntradas').textContent = fmt(r.caixa.entradas);
+    document.getElementById('sumDespesas').textContent = fmt(r.caixa.saidas);
     var saldoEl = document.getElementById('sumSaldo');
-    saldoEl.textContent = fmt(saldo);
-    saldoEl.style.color = saldo < 0 ? 'var(--rust)' : 'var(--green)';
+    saldoEl.textContent = fmt(r.caixa.resultado); setSaldoColor(saldoEl, r.caixa.resultado);
+    document.getElementById('sumPrevEntradas').textContent = fmt(r.previsto.entradas);
+    document.getElementById('sumPrevSaidas').textContent = fmt(r.previsto.saidas);
+    var prevEl = document.getElementById('sumPrevResultado');
+    prevEl.textContent = fmt(r.previsto.resultado); setSaldoColor(prevEl, r.previsto.resultado);
+    document.getElementById('sumAtraso').textContent = fmt(r.atrasoAnterior.total);
+    document.getElementById('sumAtrasoQtd').textContent = r.atrasoAnterior.qtd ? r.atrasoAnterior.qtd + ' item(ns)' : '';
+    document.getElementById('sumDividas').textContent = fmt(Engine.debtSaldoTotal(state));
+  }
+
+  function contaOptions(){ return state.contas.map(function(c){ return '<option value="' + escapeHtml(c.id) + '">' + escapeHtml(c.nome) + '</option>'; }).join(''); }
+  function renderConta(){
+    var h = hoje();
+    var total = Engine.saldoAtual(state, h);
+    var el = document.getElementById('sumSaldoConta');
+    el.textContent = total === null ? '—' : fmt(total);
+    if (total !== null) setSaldoColor(el, total); else el.style.color = '';
+    document.getElementById('sumSaldoContaSub').textContent = total === null ? 'cadastre em Conta' : '';
+    document.getElementById('eContaLabel').hidden = state.contas.length < 2;
+    var sel = document.getElementById('eConta'); var prev = sel.value; sel.innerHTML = contaOptions(); if (prev) sel.value = prev;
+
+    document.getElementById('listContas').innerHTML = state.contas.length ? state.contas.map(function(c){
+      var saldo = Engine.saldoConta(state, c.id, h);
+      return rowHtml({ id: c.id, title: escapeHtml(c.nome), meta: 'saldo inicial ' + fmt(c.saldoInicial) + ' em ' + dateBR(c.dataSaldoInicial),
+        amt: fmt(saldo), amtClass: saldo < 0 ? 'neg' : 'pos', paid: false, actions: [{label:'excluir', cls:'del', action:'del-conta'}] });
+    }).join('') : '<div class="empty">nenhuma conta cadastrada. Informe o saldo atual e a data para acompanhar o saldo real.</div>';
+
+    document.getElementById('conciliacao').innerHTML = state.contas.length ? state.contas.map(function(c){
+      var saved = state.reconciliacao[c.id], res = saved ? Engine.reconcile(state, c.id, saved.saldoBanco, h) : null, msg = '', cls = '';
+      if (res) {
+        cls = res.status === 'ok' ? 'ok' : res.status === 'pendentes' ? 'mid' : 'bad';
+        msg = 'Banco ' + fmt(res.saldoBanco) + ' (informado em ' + dateBR(saved.data) + ') · app ' + fmt(res.saldoApp) + ' · diferença ' + fmt(res.diferenca) + '. ' +
+          (res.status === 'ok' ? 'Saldos conferem.' : res.status === 'pendentes'
+            ? 'A diferença é explicada por ' + res.pendentes.qtd + ' lançamento(s) ainda não conferido(s) (' + fmt(res.pendentes.liquido) + ').'
+            : 'Sobra diferença de ' + fmt(res.diferencaConciliado) + ' que os lançamentos pendentes não explicam: confira os movimentos abaixo.');
+      }
+      return '<div class="rec-box" data-conta="' + escapeHtml(c.id) + '"><div class="t">' + escapeHtml(c.nome) + ' · saldo no app ' + fmt(Engine.saldoConta(state, c.id, h)) + '</div>' +
+        '<form class="rec"><label>Saldo informado pelo banco (R$)<input type="number" step="0.01" min="-999999999.99" max="999999999.99" required name="banco" value="' + (saved ? Engine.centsToInput(saved.saldoBanco) : '') + '"></label><button type="submit">Comparar</button></form>' +
+        (msg ? '<div class="rec-result ' + cls + '">' + escapeHtml(msg) + '</div>' : '') + '</div>';
+    }).join('') : '<div class="empty">cadastre uma conta para conciliar.</div>';
+
+    var movs = Engine.realizedMovements(state, h).slice(0, 80);
+    document.getElementById('listMovimentos').innerHTML = movs.length ? movs.map(function(m){
+      return rowHtml({ id: m.id, title: escapeHtml(m.descricao) + (m.conferido ? ' <span class="tag paid">conferido</span>' : ''),
+        meta: (m.tipo === 'entrada' ? 'entrada em ' : 'saída em ') + dateBR(m.data), amt: fmt(Math.abs(m.valor)), amtClass: m.tipo === 'entrada' ? 'pos' : 'neg', paid: false,
+        actions: [{label: m.conferido ? 'desmarcar' : 'conferir', cls: m.conferido ? '' : 'pay', action: 'conf-' + m.tipo}] });
+    }).join('') : '<div class="empty">nenhum movimento realizado desde o saldo inicial.</div>';
+  }
+
+  function fillCategorySelects(){
+    document.querySelectorAll('select[data-cat]').forEach(function(sel){
+      var prev = sel.value || sel.dataset.default || 'Outros';
+      sel.innerHTML = state.categorias.map(function(c){ return '<option>' + escapeHtml(c) + '</option>'; }).join('');
+      sel.value = state.categorias.indexOf(prev) >= 0 ? prev : 'Outros';
+    });
+    document.getElementById('oCatList').innerHTML = state.categorias.map(function(c){ return '<option value="' + escapeHtml(c) + '">'; }).join('');
+  }
+  function reportMonth(){ var v = document.getElementById('rMes').value; return /^\d{4}-\d{2}$/.test(v) ? v : Engine.monthKey(hoje()); }
+  function renderRelatorio(){
+    var mk = reportMonth(), r = Engine.monthReport(state, mk);
+    var line = function(label, v, cls){ return '<div class="r"><span>' + label + '</span><span class="num ' + (cls||'') + '">' + fmt(v) + '</span></div>'; };
+    document.getElementById('reportBox').innerHTML = line('Receitas', r.receitas, 'pos') + line('Despesas fixas', r.fixas, 'neg') + line('Despesas variáveis (inclui cartão)', r.variaveis, 'neg') +
+      line('Dívidas (parcelas do mês)', r.dividas, 'neg') + line('Resultado', r.resultado, r.resultado < 0 ? 'neg' : 'pos');
+    var cats = Object.keys(r.despesasPorCategoria).filter(function(c){ return r.despesasPorCategoria[c] !== 0; }).sort(function(a,b){ return r.despesasPorCategoria[b] - r.despesasPorCategoria[a]; });
+    document.getElementById('listPorCategoria').innerHTML = cats.length ? cats.map(function(c){
+      return rowHtml({ id: c, title: escapeHtml(c), meta: r.totalDespesas > 0 ? Math.round(r.despesasPorCategoria[c] / r.totalDespesas * 100) + '% das despesas do mês' : '', amt: fmt(r.despesasPorCategoria[c]), amtClass: 'neg', paid: false, actions: [] });
+    }).join('') : '<div class="empty">nenhuma despesa neste mês.</div>';
+
+    var bs = Engine.budgetStatus(state, mk);
+    document.getElementById('listOrcamentos').innerHTML = bs.length ? bs.map(function(b){
+      return '<div class="card-limit-bar' + (b.nivel === 'danger' ? ' danger' : b.nivel === 'warn' ? ' warn' : '') + '" data-cat="' + escapeHtml(b.categoria) + '" style="margin-bottom:10px">' +
+        '<div class="top-line"><span>' + escapeHtml(b.categoria) + ' · gasto <b class="num">' + fmt(b.gasto) + '</b></span><span>orçamento <b class="num">' + fmt(b.orcamento) + '</b></span></div>' +
+        '<div class="track"><div class="fill" style="width:' + Math.min(100, b.pct) + '%"></div></div>' +
+        '<div class="config-row"><span>' + (b.estourou ? 'estourou em <b>' + fmt(-b.restante) + '</b>' : 'restam <b>' + fmt(b.restante) + '</b>') + ' (' + Math.round(b.pct) + '%)</span>' +
+        '<span class="actions"><button class="del" data-action="del-orcamento" type="button" style="all:unset;cursor:pointer;color:var(--rust)">remover</button></span></div></div>';
+    }).join('') : '<div class="empty">nenhum orçamento definido.</div>';
+  }
+
+  function renderRecorrencias(){
+    document.getElementById('listRecorrencias').innerHTML = state.recorrencias.length ? state.recorrencias.map(function(r){
+      return rowHtml({ id: r.id, title: escapeHtml(r.descricao) + (r.ativa ? '' : ' <span class="tag due-soon">pausada</span>'),
+        meta: (r.tipo === 'entrada' ? 'entrada' : 'despesa') + ' · todo dia ' + r.dia + ' · ' + escapeHtml(r.categoria) + ' · desde ' + dateBR(r.inicio),
+        amt: fmt(r.valor), amtClass: r.tipo === 'entrada' ? 'pos' : 'neg', paid: !r.ativa,
+        actions: [{label: r.ativa ? 'pausar' : 'retomar', cls: '', action: 'toggle-rec'}, {label:'excluir', cls:'del', action:'del-rec'}] });
+    }).join('') : '<div class="empty">nenhum lançamento recorrente. Use "Repetição: todo mês" ao lançar.</div>';
+  }
+  function renderProjecao(){
+    var ps = Engine.projectionAll(state, hoje());
+    document.getElementById('projecao').innerHTML = '<div class="proj-grid">' + ps.map(function(p){
+      var neg = p.saldoProjetado < 0;
+      return '<div class="rec-box"><div class="t">próximos ' + p.dias + ' dias · até ' + dateBR(p.ate) + '</div>' +
+        '<div class="value num" style="font-size:1.1rem;font-weight:600;color:var(' + (neg ? '--rust' : '--green') + ')">' + fmt(p.saldoProjetado) + '</div>' +
+        '<div class="rec-result">' + (p.temConta ? 'saldo hoje ' + fmt(p.saldoInicial) : 'sem conta cadastrada: parte de R$ 0,00') + '<br>' +
+        '+ entradas esperadas ' + fmt(p.entradas) + '<br>− despesas em aberto ' + fmt(p.saidas.despesas) + '<br>− parcelas de dívidas ' + fmt(p.saidas.dividas) + '<br>− faturas previstas ' + fmt(p.saidas.cartao) +
+        (p.atrasadas ? '<br>(inclui ' + fmt(p.atrasadas) + ' em atraso)' : '') + '</div></div>';
+    }).join('') + '</div>';
   }
 
   function renderAll(){
@@ -317,6 +471,11 @@
     renderEntradas();
     renderCartao();
     renderDividas();
+    renderConta();
+    fillCategorySelects();
+    renderRelatorio();
+    renderRecorrencias();
+    renderProjecao();
     renderSummary();
   }
 
@@ -340,117 +499,202 @@
     });
   });
 
+  // Depois de qualquer mudança: gera as ocorrências recorrentes que faltam, salva e redesenha.
+  function commit(){ Engine.materializeRecurrences(state, hoje()); save(); renderAll(); }
+
   // ---------- forms ----------
+  // Lê um campo de valor (reais) e devolve centavos inteiros; 0 se vazio, inválido ou acima do teto (B5).
+  function readAmount(id){ var c = Engine.parseCents(document.getElementById(id).value); return c > 0 && c <= Engine.MAX_CENTS ? c : 0; }
+
   document.getElementById('formDespesa').addEventListener('submit', function(e){
     e.preventDefault();
-    var valor = parseFloat(document.getElementById('dValor').value);
+    var valor = readAmount('dValor');
     var desc = document.getElementById('dDesc').value.trim();
     var venc = document.getElementById('dVenc').value;
-    if (!valor || !desc || !venc) return;
-    state.expenses.push({id: uid(), valor: valor, descricao: desc, vencimento: venc, pago: false, dataPagamento: null});
+    if (!(valor > 0) || !desc || !venc) return;
+    var catD = document.getElementById('dCat').value, natD = document.getElementById('dNat').value;
+    if (document.getElementById('dRep').value === 'mensal') Engine.addRecurrence(state, {tipo: 'despesa', valor: valor, descricao: desc, inicio: venc, categoria: catD, natureza: natD});
+    else state.expenses.push(Engine.makeExpense({valor: valor, descricao: desc, vencimento: venc, categoria: catD, natureza: natD}));
     this.reset();
-    save(); renderAll();
+    commit();
   });
 
   document.getElementById('formEntrada').addEventListener('submit', function(e){
     e.preventDefault();
-    var valor = parseFloat(document.getElementById('eValor').value);
+    var valor = readAmount('eValor');
     var desc = document.getElementById('eDesc').value.trim();
     var data = document.getElementById('eData').value;
-    if (!valor || !desc || !data) return;
-    state.income.push({id: uid(), valor: valor, descricao: desc, data: data});
+    if (!(valor > 0) || !desc || !data) return;
+    var catE = document.getElementById('eCat').value, contaE = state.contas.length > 1 ? document.getElementById('eConta').value : '';
+    if (document.getElementById('eRep').value === 'mensal') Engine.addRecurrence(state, {tipo: 'entrada', valor: valor, descricao: desc, inicio: data, categoria: catE, contaId: contaE});
+    else state.income.push(Engine.makeIncome({valor: valor, descricao: desc, data: data, categoria: catE, contaId: contaE}));
     this.reset();
-    save(); renderAll();
+    commit();
+  });
+
+  document.getElementById('formConta').addEventListener('submit', function(e){
+    e.preventDefault();
+    var saldo = Engine.parseCents(document.getElementById('kSaldo').value), data = document.getElementById('kData').value;
+    var nome = document.getElementById('kNome').value.trim();
+    if (saldo === null || Math.abs(saldo) > Engine.MAX_CENTS || !nome || !data) return;
+    Engine.addAccount(state, {nome: nome, saldoInicial: saldo, dataSaldoInicial: data});
+    this.reset(); document.getElementById('kData').value = hoje();
+    commit();
+  });
+
+  document.getElementById('conciliacao').addEventListener('submit', function(e){
+    var form = e.target.closest('form.rec'); if (!form) return;
+    e.preventDefault();
+    var contaId = form.closest('.rec-box').dataset.conta, banco = Engine.parseCents(form.elements.banco.value);
+    if (banco === null || Math.abs(banco) > Engine.MAX_CENTS) return;
+    state.reconciliacao[contaId] = {saldoBanco: banco, data: hoje()};
+    commit();
+  });
+
+  document.getElementById('formOrcamento').addEventListener('submit', function(e){
+    e.preventDefault();
+    var cents = Engine.parseCents(document.getElementById('oValor').value);
+    var r = Engine.setBudget(state, document.getElementById('oCat').value, cents === null ? -1 : cents);
+    if (!r.ok) { showMessage('Orçamento inválido', r.erro); return; }
+    this.reset(); commit();
+  });
+  document.getElementById('rMes').addEventListener('input', renderRelatorio);
+  document.getElementById('listOrcamentos').addEventListener('click', function(e){
+    var b = e.target.closest('[data-action="del-orcamento"]'); if (!b) return;
+    e.stopPropagation();
+    Engine.setBudget(state, b.closest('[data-cat]').dataset.cat, 0); commit();
   });
 
   document.getElementById('formConfigCartao').addEventListener('submit', function(e){
     e.preventDefault();
-    var limite = parseFloat(document.getElementById('cLimite').value) || 0;
-    var fechamento = parseInt(document.getElementById('cFechamento').value) || 1;
+    var limite = readAmount('cLimite');
+    var fechamento = Math.min(31, Math.max(1, parseInt(document.getElementById('cFechamento').value) || 1));
+    var venc = Math.min(31, Math.max(1, parseInt(document.getElementById('cVencimento').value) || Engine.defaultVencimentoDia(fechamento)));
     state.card.limite = limite;
-    state.card.fechamento = Math.min(31, Math.max(1, fechamento));
-    save(); renderAll();
+    state.card.fechamento = fechamento;
+    state.card.vencimentoDia = venc;
+    commit();
   });
 
   document.getElementById('formCartao').addEventListener('submit', function(e){
     e.preventDefault();
-    var valor = parseFloat(document.getElementById('ccValor').value);
+    var valor = readAmount('ccValor');
     var desc = document.getElementById('ccDesc').value.trim();
     var data = document.getElementById('ccData').value;
-    if (!valor || !desc || !data) return;
-    state.card.lancamentos.push({id: uid(), valor: valor, descricao: desc, data: data});
+    if (!(valor > 0) || !desc || !data) return;
+    var tipo = document.getElementById('ccTipo').value;
+    var parcelas = Math.min(48, Math.max(1, parseInt(document.getElementById('ccParcelas').value) || 1));
+    Engine.addCardPurchase(state, {valor: valor, descricao: desc, data: data, tipo: tipo, parcelas: parcelas, categoria: document.getElementById('ccCat').value});
     this.reset();
-    save(); renderAll();
+    document.getElementById('ccData').value = hoje();
+    commit();
   });
 
   document.getElementById('formDivida').addEventListener('submit', function(e){
     e.preventDefault();
-    var valorParcela = parseFloat(document.getElementById('vValor').value);
+    var valorParcela = readAmount('vValor');
     var desc = document.getElementById('vDesc').value.trim();
-    var parcelas = parseInt(document.getElementById('vParcelas').value) || 1;
+    var parcelas = Math.min(1200, Math.max(1, parseInt(document.getElementById('vParcelas').value) || 1));
     var venc = document.getElementById('vVenc').value;
-    if (!valorParcela || !desc || !venc) return;
-    state.debts.push({id: uid(), valorParcela: valorParcela, descricao: desc, parcelas: parcelas, parcelaAtual: 1, vencimento: venc, pago: false});
+    if (!(valorParcela > 0) || !desc || !venc) return;
+    var contratado = readAmount('vContratado');
+    var taxaTxt = document.getElementById('vTaxa').value.replace(',', '.'), taxa = taxaTxt === '' ? NaN : Number(taxaTxt);
+    state.debts.push({id: uid(), valorParcela: valorParcela, descricao: desc, parcelas: parcelas, parcelaAtual: 1, vencimento: venc,
+      diaOriginal: Engine.parseISO(venc).d, pago: false, pagas: [], valorContratado: contratado > 0 ? contratado : null,
+      taxa: Number.isFinite(taxa) && taxa >= 0 && taxa <= 1000 ? taxa : null, categoria: 'Dívidas'});
     this.reset();
     document.getElementById('vParcelas').value = 1;
-    save(); renderAll();
-  });
-
-  document.getElementById('btnFecharFatura').addEventListener('click', function(){
-    if (!state.card.lancamentos.length) { alert('Não há lançamentos no ciclo atual para fechar.'); return; }
-    var total = cardUsedTotal();
-    var faturaId = uid();
-    var hoje = todayISO;
-    var vencFatura = new Date();
-    vencFatura.setDate(vencFatura.getDate() + 10);
-    var vencISO = vencFatura.toISOString().slice(0,10);
-    var despesaId = uid();
-    state.expenses.push({id: despesaId, valor: total, descricao: 'Fatura do cartão (' + dateBR(hoje) + ')', vencimento: vencISO, pago: false, dataPagamento: null});
-    state.card.faturas.push({id: faturaId, total: total, dataFechamento: hoje, despesaId: despesaId});
-    state.card.lancamentos = [];
-    save(); renderAll();
-    document.querySelector('nav.tabs button[data-tab="despesas"]').click();
+    document.getElementById('vVenc').value = hoje();
+    commit();
   });
 
   // ---------- row actions (event delegation) ----------
-  document.querySelector('.wrap').addEventListener('click', function(e){
+  document.querySelector('.wrap').addEventListener('click', async function(e){
     var btn = e.target.closest('button[data-action]');
     if (!btn) return;
     var row = btn.closest('.row');
+    if (!row) return;
     var id = row.dataset.id;
     var action = btn.dataset.action;
+    var r;
 
     if (action === 'pay-expense') {
-      var exp = state.expenses.find(function(x){return x.id===id;});
-      if (exp) { exp.pago = true; exp.dataPagamento = todayISO; }
+      var exp = Engine.findExpense(state, id);
+      if (!exp) return;
+      var pg = await askPayment({title: 'Pagar "' + exp.descricao + '"', text: 'Vencimento em ' + dateBR(exp.vencimento) + ' · valor ' + fmt(exp.valor) + '. Informe quando e quanto foi pago.', valor: exp.valor});
+      if (!pg) return;
+      r = Engine.payExpense(state, id, pg, hoje());
+      if (!r.ok) { await showMessage('Não foi possível pagar', r.erro); return; }
+    } else if (action === 'unpay-expense') {
+      var pe = Engine.findExpense(state, id);
+      if (!pe) return;
+      var ok = await askConfirm({title: 'Estornar o pagamento?', text: '"' + pe.descricao + '" volta para "em aberto"' + (pe.origem && pe.origem.tipo === 'divida' ? ' e a parcela volta para a aba Dívidas.' : '.'), action: 'Estornar', danger: true});
+      if (!ok) return;
+      r = Engine.unpayExpense(state, id);
+      if (!r.ok) { await showMessage('Não foi possível estornar', r.erro); return; }
     } else if (action === 'del-expense') {
-      if (confirm('Excluir esta despesa?')) state.expenses = state.expenses.filter(function(x){return x.id!==id;});
+      var chk = Engine.canDeleteExpense(state, id);
+      if (!chk.ok) { await showMessage('Exclusão bloqueada', chk.motivo); return; }
+      if (!await askConfirm({title: 'Excluir esta despesa?', text: 'Esta ação não pode ser desfeita.', action: 'Excluir', danger: true})) return;
+      Engine.deleteExpense(state, id);
     } else if (action === 'del-income') {
-      if (confirm('Excluir esta entrada?')) state.income = state.income.filter(function(x){return x.id!==id;});
+      if (!await askConfirm({title: 'Excluir esta entrada?', text: 'Esta ação não pode ser desfeita.', action: 'Excluir', danger: true})) return;
+      state.income = state.income.filter(function(x){return x.id!==id;});
     } else if (action === 'del-card-item') {
-      if (confirm('Excluir este lançamento do cartão?')) state.card.lancamentos = state.card.lancamentos.filter(function(x){return x.id!==id;});
+      var item = state.card.lancamentos.find(function(x){return x.id===id;});
+      if (!item) return;
+      var restantes = item.compraId ? state.card.lancamentos.filter(function(x){return x.compraId===item.compraId;}).length : 1;
+      if (!await askConfirm({title: restantes > 1 ? 'Excluir a compra parcelada?' : 'Excluir este lançamento do cartão?', text: restantes > 1 ? 'Serão removidas as ' + restantes + ' parcelas ainda em aberto desta compra.' : 'Esta ação não pode ser desfeita.', action: 'Excluir', danger: true})) return;
+      Engine.deleteCardItem(state, id);
+    } else if (action === 'close-invoice') {
+      r = Engine.closeInvoice(state, id, hoje());
+      if (!r.ok) { await showMessage('Não foi possível fechar', r.erro); return; }
+      commit();
+      if (r.despesa) document.querySelector('nav.tabs button[data-tab="despesas"]').click();
+      else await showMessage('Fatura sem valor a pagar', 'Os créditos cobriram as compras do ciclo. A sobra abate a próxima fatura.', false);
+      return;
+    } else if (action === 'reopen-invoice') {
+      if (!await askConfirm({title: 'Reabrir esta fatura?', text: 'Os lançamentos voltam para o cartão e a despesa da fatura é removida de Despesas.', action: 'Reabrir', danger: true})) return;
+      r = Engine.reopenInvoice(state, id);
+      if (!r.ok) { await showMessage('Não foi possível reabrir', r.erro); return; }
     } else if (action === 'pay-debt') {
-      var d = state.debts.find(function(x){return x.id===id;});
-      if (d) {
-        if (d.parcelaAtual >= d.parcelas) {
-          d.pago = true;
-        } else {
-          d.parcelaAtual += 1;
-          var nextDate = new Date(d.vencimento + 'T00:00:00');
-          nextDate.setMonth(nextDate.getMonth() + 1);
-          d.vencimento = nextDate.toISOString().slice(0,10);
-        }
-      }
+      var d = Engine.findDebt(state, id);
+      if (!d) return;
+      var pd = await askPayment({title: 'Pagar parcela ' + d.parcelaAtual + '/' + d.parcelas, text: d.descricao + ' · vencimento ' + dateBR(d.vencimento) + '. O pagamento vira uma despesa paga em Despesas.', valor: d.valorParcela, action: 'Pagar parcela'});
+      if (!pd) return;
+      r = Engine.payDebtInstallment(state, id, pd, hoje());
+      if (!r.ok) { await showMessage('Não foi possível pagar', r.erro); return; }
+    } else if (action === 'undo-debt') {
+      var ud = Engine.findDebt(state, id);
+      if (!ud || !ud.pagas.length) return;
+      if (!await askConfirm({title: 'Desfazer o último pagamento?', text: 'A parcela ' + ud.pagas[ud.pagas.length-1].parcela + ' volta a ficar em aberto e a despesa gerada é removida.', action: 'Desfazer', danger: true})) return;
+      r = Engine.undoDebtPayment(state, id);
+      if (!r.ok) { await showMessage('Não foi possível desfazer', r.erro); return; }
+    } else if (action === 'conf-entrada' || action === 'conf-saida') {
+      var tipoM = action === 'conf-entrada' ? 'entrada' : 'saida';
+      var alvo = tipoM === 'entrada' ? state.income.find(function(x){return x.id===id;}) : Engine.findExpense(state, id);
+      if (alvo) Engine.setConferido(state, tipoM, id, !alvo.conferido);
+    } else if (action === 'del-conta') {
+      if (!await askConfirm({title: 'Excluir esta conta?', text: 'Os lançamentos continuam existindo e passam a valer para a primeira conta.', action: 'Excluir', danger: true})) return;
+      Engine.removeAccount(state, id);
+    } else if (action === 'toggle-rec') {
+      var rc = state.recorrencias.find(function(x){return x.id===id;});
+      if (rc) Engine.setRecurrenceActive(state, id, !rc.ativa);
+    } else if (action === 'del-rec') {
+      if (!await askConfirm({title: 'Excluir esta recorrência?', text: 'As ocorrências futuras ainda não pagas serão removidas. O que já passou continua no histórico.', action: 'Excluir', danger: true})) return;
+      Engine.removeRecurrence(state, id, hoje());
     } else if (action === 'del-debt') {
-      if (confirm('Excluir esta dívida?')) state.debts = state.debts.filter(function(x){return x.id!==id;});
+      if (!await askConfirm({title: 'Excluir esta dívida?', text: 'As despesas já geradas por parcelas pagas continuam em Despesas.', action: 'Excluir', danger: true})) return;
+      state.debts = state.debts.filter(function(x){return x.id!==id;});
+      state.expenses.forEach(function(x){ if (x.origem && x.origem.tipo === 'divida' && x.origem.id === id) x.origem = null; });
     }
-    save(); renderAll();
+    commit();
   });
 
   // ---------- export / import / reset ----------
   document.getElementById('btnExport').addEventListener('click', async function(){
-    try { await window.exportProtected(state, 'gerenc-fin:backup', 'livro-caixa-'+todayISO+'.secure.json'); }
-    catch (_) { alert('Não foi possível exportar o backup protegido.'); }
+    try { await window.exportProtected(state, 'gerenc-fin:backup', 'livro-caixa-'+hoje()+'.secure.json'); }
+    catch (_) { showMessage('Exportação falhou', 'Não foi possível exportar o backup protegido.'); }
   });
 
   document.getElementById('btnImport').addEventListener('click', function(){ document.getElementById('importFile').click(); });
@@ -475,10 +719,10 @@
         } else {
           throw new Error('backup não criptografado');
         }
-        if (!confirm('Importar este arquivo vai substituir todos os dados atuais. Continuar?')) return;
-        normalizeState(data); await save(); renderAll();
+        if (!await askConfirm({title: 'Substituir todos os dados?', text: 'Importar este arquivo vai substituir todos os dados atuais.', action: 'Importar', danger: true})) return;
+        normalizeState(data); await commit();
         document.getElementById('saveStatus').textContent='backup importado e salvo criptografado'+(oldFormat?'. Este backup usa a proteção antiga: exporte um novo para ficar com a proteção atual.':'');
-      } catch(err) { alert('Backup inválido, senha incorreta ou arquivo não criptografado.'); }
+      } catch(err) { showMessage('Backup inválido', 'Backup inválido, senha incorreta ou arquivo não criptografado.'); }
     };
     reader.readAsText(file); e.target.value='';
   });
@@ -486,15 +730,15 @@
   document.getElementById('btnRecover').addEventListener('click', window.lockVault);
   document.getElementById('btnBiometric').addEventListener('click', () => window.vaultSettings());
 
-  document.getElementById('btnReset').addEventListener('click', function(){
-    if (confirm('Isso vai apagar TODOS os dados deste navegador. Tem certeza?')) {
+  document.getElementById('btnReset').addEventListener('click', async function(){
+    if (await askConfirm({title: 'Apagar todos os lançamentos?', text: 'Isso vai apagar TODOS os dados deste navegador. Tem certeza?', action: 'Apagar tudo', danger: true})) {
       state=freshState(); save().then(renderAll);
     }
   });
 
   document.getElementById('btnExportCert').addEventListener('click', async function(){
     try { if (FinancCert.linked) await FinancCert.export(); else { const cert=getDeviceCert(); await window.exportProtected(cert, 'gerenc-fin:certificate', 'gerenc-fin-'+cert.id+'.cert.secure.json'); } }
-    catch (_) { alert('Não foi possível exportar o certificado protegido.'); }
+    catch (_) { showMessage('Exportação falhou', 'Não foi possível exportar o certificado protegido.'); }
   });
   document.getElementById('btnImportCert').addEventListener('click', function(){ document.getElementById('importCertFile').click(); });
   document.getElementById('importCertFile').addEventListener('change', function(e){
@@ -504,20 +748,27 @@
       try {
         var cert=await window.importCertificate(JSON.parse(ev.target.result), 'gerenc-fin:certificate');
         if (!cert || !cert.id || !cert.secret) throw new Error('certificado inválido');
-        if (!confirm(FinancCert.linked ? 'Importar este certificado? Ele passa a ser o certificado de todos os apps; o atual continua guardado para os backups antigos.' : 'Importar este certificado substituirá o certificado deste navegador. Continuar?')) return;
+        if (!await askConfirm({title: 'Importar certificado?', text: FinancCert.linked ? 'Ele passa a ser o certificado de todos os apps; o atual continua guardado para os backups antigos.' : 'Importar este certificado substituirá o certificado deste navegador.', action: 'Importar'})) return;
         await saveCert(cert);
-        alert('Certificado importado. Recarregue o aplicativo antes de abrir o backup.');
-      } catch(err) { alert('Arquivo de certificado inválido.'); }
+        await showMessage('Certificado importado', 'Recarregue o aplicativo antes de abrir o backup.', false);
+      } catch(err) { showMessage('Certificado inválido', 'Arquivo de certificado inválido.'); }
     };
     reader.readAsText(file); e.target.value='';
   });
 
   // ---------- init ----------
   document.getElementById('dataHoje').textContent = new Date().toLocaleDateString('pt-BR', {day:'2-digit', month:'long', year:'numeric'});
-  ['dVenc','eData','ccData','vVenc'].forEach(function(id){
+  ['dVenc','eData','ccData','vVenc','kData'].forEach(function(id){
     var el = document.getElementById(id);
-    if (el && !el.value) el.value = todayISO;
+    if (el && !el.value) el.value = hoje();
   });
 
-  try { await load(); renderAll(); } catch (error) { document.getElementById('gateStatus').textContent = error.message || 'Falha na migração. Os dados anteriores foram preservados.'; }
+  document.getElementById('rMes').value = Engine.monthKey(hoje());
+  try { await load(); if (Engine.materializeRecurrences(state, hoje())) await save(); renderAll(); } catch (error) { document.getElementById('gateStatus').textContent = error.message || 'Falha na migração. Os dados anteriores foram preservados.'; }
+  // M7: se o app ficou aberto de um dia para o outro, recalcula tudo ao voltar para a tela.
+  document.addEventListener('visibilitychange', function(){
+    if (document.visibilityState !== 'visible' || document.body.classList.contains('locked')) return;
+    document.getElementById('dataHoje').textContent = new Date().toLocaleDateString('pt-BR', {day:'2-digit', month:'long', year:'numeric'});
+    commit();
+  });
 })().catch(() => window.lockVault());

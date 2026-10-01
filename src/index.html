@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="pt-BR" class="vault-locked" data-vault-version="1.7.0" data-vault-app="gerenc-fin" data-vault-name="Livro-Caixa">
+<html lang="pt-BR" class="vault-locked" data-vault-version="1.8.0" data-vault-app="gerenc-fin" data-vault-name="Livro-Caixa">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -52,6 +52,9 @@
     margin-bottom: 26px;
   }
   @media (min-width: 560px) { .ledger-summary { grid-template-columns: repeat(4, 1fr); } }
+  .ledger-summary { margin-bottom: 14px; }
+  .sum-title { font-family: 'IBM Plex Mono', monospace; font-size: 0.7rem; letter-spacing: 0.03em; color: var(--ink-dim); margin: 0 2px 6px; }
+  .ledger-summary .cell .sub { font-family: 'IBM Plex Mono', monospace; font-size: 0.62rem; color: var(--ink-dim); margin-top: 2px; min-height: 1em; }
   .ledger-summary .cell {
     background: var(--surface);
     border: 1px solid var(--line);
@@ -139,11 +142,13 @@
     border-radius: 16px;
   }
   @media (min-width: 480px) {
-    form.entry.f-expense, form.entry.f-income { grid-template-columns: 100px 1fr 130px auto; align-items: end; }
-    form.entry.f-card { grid-template-columns: 100px 1fr 130px auto; align-items: end; }
-    form.entry.f-debt { grid-template-columns: 100px 1fr 90px 130px auto; align-items: end; }
-    form.entry.f-config { grid-template-columns: 1fr 1fr auto; align-items: end; }
+    form.entry { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); align-items: end; }
+    form.entry label.wide { grid-column: span 2; }
   }
+  .pay-form { display: grid; gap: 10px; margin-top: 10px; }
+  .pay-form label { display: flex; flex-direction: column; gap: 3px; font-family: 'IBM Plex Mono', monospace; font-size: 0.68rem; color: var(--ink-dim); }
+  .pay-form .pay-diff { min-height: 1.2em; margin: 0; }
+  form.entry label[hidden] { display: none; }
   form.entry label {
     display: flex;
     flex-direction: column;
@@ -272,6 +277,23 @@
   }
   .config-row b { color: var(--ink); font-family: 'IBM Plex Mono', monospace; }
 
+  .row.cycle { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin-top: 10px; }
+  .row.cycle .desc .t { font-weight: 600; }
+  .row.item { padding-left: 12px; }
+  .rep-table { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 6px 16px; }
+  .rep-table .r { display: flex; justify-content: space-between; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 0.92rem; }
+  .rep-table .r:last-child { border-bottom: none; font-weight: 600; }
+  .rep-table .r .num.pos { color: var(--green); } .rep-table .r .num.neg { color: var(--rust); }
+  .proj-grid { display: grid; grid-template-columns: 1fr; gap: 10px; }
+  @media (min-width: 560px) { .proj-grid { grid-template-columns: repeat(3, 1fr); } }
+  .rec-box { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 14px 16px; margin-bottom: 10px; }
+  .rec-box .t { font-size: 0.94rem; margin-bottom: 8px; }
+  .rec-box form { display: flex; gap: 8px; align-items: end; flex-wrap: wrap; }
+  .rec-box form label { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 140px; font-family: 'IBM Plex Mono', monospace; font-size: 0.68rem; color: var(--ink-dim); }
+  .rec-box form input { font-family: 'IBM Plex Mono', monospace; font-size: 0.88rem; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; color: var(--ink); width: 100%; }
+  .rec-box form button { font-family: 'IBM Plex Mono', monospace; font-weight: 600; font-size: 0.8rem; background: var(--accent); color: var(--bg); border: none; border-radius: 999px; padding: 10px 16px; cursor: pointer; }
+  .rec-result { font-family: 'IBM Plex Mono', monospace; font-size: 0.74rem; color: var(--ink-dim); margin-top: 8px; line-height: 1.5; }
+  .rec-result.ok { color: var(--green); } .rec-result.bad { color: var(--rust); } .rec-result.mid { color: var(--gold); }
   .close-cycle-btn {
     margin-top: 12px;
     font-family: 'IBM Plex Mono', monospace;
@@ -347,11 +369,24 @@
     </div>
   </header>
 
+  <div class="sum-title">realizado no mês (caixa)</div>
   <div class="ledger-summary">
-    <div class="cell pos"><div class="label">entradas do mês</div><div class="value num" id="sumEntradas">R$ 0,00</div></div>
-    <div class="cell neg"><div class="label">despesas do mês</div><div class="value num" id="sumDespesas">R$ 0,00</div></div>
-    <div class="cell saldo"><div class="label">saldo do mês</div><div class="value num" id="sumSaldo">R$ 0,00</div></div>
+    <div class="cell pos"><div class="label">entradas</div><div class="value num" id="sumEntradas">R$ 0,00</div></div>
+    <div class="cell neg"><div class="label">saídas pagas</div><div class="value num" id="sumDespesas">R$ 0,00</div></div>
+    <div class="cell saldo"><div class="label">resultado</div><div class="value num" id="sumSaldo">R$ 0,00</div></div>
+    <div class="cell saldo"><div class="label">saldo atual em conta</div><div class="value num" id="sumSaldoConta">—</div><div class="sub" id="sumSaldoContaSub"></div></div>
+  </div>
+  <div class="sum-title">previsto no mês (vencimentos)</div>
+  <div class="ledger-summary">
+    <div class="cell pos"><div class="label">entradas previstas</div><div class="value num" id="sumPrevEntradas">R$ 0,00</div></div>
+    <div class="cell neg"><div class="label">a pagar no mês</div><div class="value num" id="sumPrevSaidas">R$ 0,00</div></div>
+    <div class="cell saldo"><div class="label">resultado previsto</div><div class="value num" id="sumPrevResultado">R$ 0,00</div></div>
+    <div class="cell neg"><div class="label">em atraso (meses anteriores)</div><div class="value num" id="sumAtraso">R$ 0,00</div><div class="sub" id="sumAtrasoQtd"></div></div>
+  </div>
+  <div class="sum-title">cartão e dívidas</div>
+  <div class="ledger-summary">
     <div class="cell"><div class="label">limite livre no cartão</div><div class="value num" id="sumCartao">R$ 0,00</div></div>
+    <div class="cell"><div class="label">saldo devedor das dívidas</div><div class="value num" id="sumDividas">R$ 0,00</div></div>
   </div>
 
   <nav class="tabs">
@@ -359,18 +394,25 @@
     <button data-tab="entradas">Entradas</button>
     <button data-tab="cartao">Cartão</button>
     <button data-tab="dividas">Dívidas</button>
+    <button data-tab="conta">Conta</button>
+    <button data-tab="relatorio">Relatório</button>
   </nav>
 
   <!-- DESPESAS -->
   <section class="panel active" id="panel-despesas">
     <form class="entry f-expense" id="formDespesa">
-      <label>Valor (R$)<input type="number" step="0.01" min="0" id="dValor" required></label>
-      <label>Descrição<input type="text" id="dDesc" required placeholder="ex: aluguel"></label>
+      <label>Valor (R$)<input type="number" step="0.01" min="0" max="999999999.99" id="dValor" required></label>
+      <label class="wide">Descrição<input type="text" id="dDesc" required placeholder="ex: aluguel"></label>
       <label>Vencimento<input type="date" id="dVenc" required></label>
+      <label>Categoria<select id="dCat" data-cat></select></label>
+      <label>Tipo<select id="dNat"><option value="variavel">Variável</option><option value="fixa">Fixa</option></select></label>
+      <label>Repetição<select id="dRep"><option value="">Não repetir</option><option value="mensal">Todo mês</option></select></label>
       <button type="submit" class="add">Lançar</button>
     </form>
     <div class="section-title">em aberto</div>
     <div class="list" id="listDespesasAbertas"></div>
+    <div class="section-title">recorrentes (despesas e entradas todo mês)</div>
+    <div class="list" id="listRecorrencias"></div>
     <div class="section-title">pagas</div>
     <div class="list" id="listDespesasPagas"></div>
   </section>
@@ -378,9 +420,12 @@
   <!-- ENTRADAS -->
   <section class="panel" id="panel-entradas">
     <form class="entry f-income" id="formEntrada">
-      <label>Valor (R$)<input type="number" step="0.01" min="0" id="eValor" required></label>
-      <label>Descrição<input type="text" id="eDesc" required placeholder="ex: salário"></label>
+      <label>Valor (R$)<input type="number" step="0.01" min="0" max="999999999.99" id="eValor" required></label>
+      <label class="wide">Descrição<input type="text" id="eDesc" required placeholder="ex: salário"></label>
       <label>Data<input type="date" id="eData" required></label>
+      <label>Categoria<select id="eCat" data-cat data-default="Salário"></select></label>
+      <label>Repetição<select id="eRep"><option value="">Não repetir</option><option value="mensal">Todo mês</option></select></label>
+      <label id="eContaLabel" hidden>Conta<select id="eConta"></select></label>
       <button type="submit" class="add">Lançar</button>
     </form>
     <div class="section-title">recebidas</div>
@@ -390,8 +435,9 @@
   <!-- CARTAO -->
   <section class="panel" id="panel-cartao">
     <form class="entry f-config" id="formConfigCartao">
-      <label>Limite total (R$)<input type="number" step="0.01" min="0" id="cLimite"></label>
+      <label>Limite total (R$)<input type="number" step="0.01" min="0" max="999999999.99" id="cLimite"></label>
       <label>Dia de fechamento<input type="number" min="1" max="31" id="cFechamento"></label>
+      <label>Dia de vencimento<input type="number" min="1" max="31" id="cVencimento"></label>
       <button type="submit" class="add">Salvar</button>
     </form>
 
@@ -401,15 +447,19 @@
       <div class="config-row" id="cartaoConfigInfo"></div>
     </div>
 
-    <div class="section-title">lançamentos do ciclo atual</div>
+    <div class="section-title">lançar no cartão</div>
     <form class="entry f-card" id="formCartao">
-      <label>Valor (R$)<input type="number" step="0.01" min="0" id="ccValor" required></label>
-      <label>Descrição<input type="text" id="ccDesc" required placeholder="ex: mercado"></label>
+      <label>Valor (R$)<input type="number" step="0.01" min="0" max="999999999.99" id="ccValor" required></label>
+      <label class="wide">Descrição<input type="text" id="ccDesc" required placeholder="ex: mercado"></label>
       <label>Data<input type="date" id="ccData" required></label>
+      <label>Categoria<select id="ccCat" data-cat data-default="Cartão"></select></label>
+      <label>Tipo<select id="ccTipo"><option value="compra">Compra</option><option value="credito">Crédito / estorno</option></select></label>
+      <label>Parcelas<input type="number" min="1" max="48" value="1" id="ccParcelas"></label>
       <button type="submit" class="add">Lançar</button>
     </form>
+
+    <div class="section-title">faturas em aberto (por ciclo)</div>
     <div class="list" id="listCartaoAberto"></div>
-    <button class="close-cycle-btn" id="btnFecharFatura"><i data-icon="file-text" data-size="15"></i> Fechar fatura do ciclo e gerar despesa a pagar</button>
 
     <div class="section-title">faturas fechadas</div>
     <div class="list" id="listFaturas"></div>
@@ -418,16 +468,55 @@
   <!-- DIVIDAS -->
   <section class="panel" id="panel-dividas">
     <form class="entry f-debt" id="formDivida">
-      <label>Valor parcela (R$)<input type="number" step="0.01" min="0" id="vValor" required></label>
-      <label>Descrição<input type="text" id="vDesc" required placeholder="ex: empréstimo consignado"></label>
+      <label>Valor parcela (R$)<input type="number" step="0.01" min="0" max="999999999.99" id="vValor" required></label>
+      <label class="wide">Descrição<input type="text" id="vDesc" required placeholder="ex: empréstimo consignado"></label>
       <label>Parcelas<input type="number" min="1" id="vParcelas" value="1" required></label>
       <label>1º vencimento<input type="date" id="vVenc" required></label>
+      <label>Valor contratado (opcional)<input type="number" step="0.01" min="0" max="999999999.99" id="vContratado"></label>
+      <label>Taxa % ao mês (opcional)<input type="number" step="0.01" min="0" max="1000" id="vTaxa"></label>
       <button type="submit" class="add">Lançar</button>
     </form>
     <div class="section-title">em aberto</div>
+    <div class="config-row" id="dividasTotal"></div>
     <div class="list" id="listDividasAbertas"></div>
     <div class="section-title">quitadas</div>
     <div class="list" id="listDividasQuitadas"></div>
+  </section>
+
+  <!-- RELATORIO: mês, orçamento e projeção -->
+  <section class="panel" id="panel-relatorio">
+    <form class="entry" id="formMes" onsubmit="return false">
+      <label>Mês do relatório<input type="month" id="rMes" required></label>
+    </form>
+    <div class="section-title">resultado do mês (competência)</div>
+    <div class="rep-table" id="reportBox"></div>
+    <div class="section-title">despesas por categoria</div>
+    <div class="list" id="listPorCategoria"></div>
+    <div class="section-title">orçamento mensal por categoria</div>
+    <form class="entry" id="formOrcamento">
+      <label class="wide">Categoria<input type="text" id="oCat" list="oCatList" maxlength="40" required placeholder="ex: Lazer"><datalist id="oCatList"></datalist></label>
+      <label>Orçamento (R$)<input type="number" step="0.01" min="0" max="999999999.99" id="oValor" required></label>
+      <button type="submit" class="add">Definir</button>
+    </form>
+    <div id="listOrcamentos"></div>
+    <div class="section-title">projeção de caixa</div>
+    <div id="projecao"></div>
+  </section>
+
+  <!-- CONTA: saldo real e conciliação -->
+  <section class="panel" id="panel-conta">
+    <form class="entry" id="formConta">
+      <label class="wide">Nome da conta<input type="text" id="kNome" required placeholder="ex: conta corrente"></label>
+      <label>Saldo inicial (R$)<input type="number" step="0.01" min="-999999999.99" max="999999999.99" id="kSaldo" required></label>
+      <label>Data do saldo<input type="date" id="kData" required></label>
+      <button type="submit" class="add">Adicionar conta</button>
+    </form>
+    <div class="section-title">contas</div>
+    <div class="list" id="listContas"></div>
+    <div class="section-title">conciliação com o banco</div>
+    <div id="conciliacao"></div>
+    <div class="section-title">movimentos realizados</div>
+    <div class="list" id="listMovimentos"></div>
   </section>
 
   <footer class="util">
@@ -452,6 +541,7 @@
 <script src="financ-icons.js"></script>
 <script src="secure-vault.js"></script>
 <script src="secure-ui.js"></script>
+<script src="ledger-engine.js"></script>
 <script src="app.js"></script>
 
 </body>

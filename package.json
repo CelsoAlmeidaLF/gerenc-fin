@@ -1,0 +1,7 @@
+{
+  "name": "livro-caixa",
+  "private": true,
+  "description": "Livro-Caixa: gerenciador financeiro pessoal (app web estático, dados só no aparelho).",
+  "scripts": { "test": "node --test test/" },
+  "license": "GPL-3.0-or-later"
+}
