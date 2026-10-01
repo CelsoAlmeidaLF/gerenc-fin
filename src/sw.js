@@ -1,4 +1,4 @@
-const CACHE_NAME = 'livro-caixa-v1.8.0';
+const CACHE_NAME = 'livro-caixa-v1.9.0';
 const APP_SHELL = [
   './index.html',
   './ledger-engine.js',
@@ -7,6 +7,10 @@ const APP_SHELL = [
   './secure-ui.js',
   './secure-ui.css',
   './financ-icons.js',
+  './apoio/apoio.css',
+  './apoio/doacao.js',
+  './apoio/feedback.js',
+  './apoio/qrcode.js',
   './fonts/fonts.css',
   './fonts/ibm-plex-mono-latin-400.woff2',
   './fonts/ibm-plex-mono-latin-500.woff2',
@@ -46,6 +50,8 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
+  // Outros domínios (Firebase) e envios (POST) vão direto para a rede, sem cache.
+  if (event.request.method !== 'GET' || new URL(event.request.url).origin !== self.location.origin) return;
   // Rede primeiro: atualizações valem na hora; o cache só entra quando estiver offline.
   event.respondWith(
     fetch(event.request).then((response) => {
