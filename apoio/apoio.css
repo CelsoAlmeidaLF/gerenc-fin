@@ -63,3 +63,7 @@ background:var(--dz-bg);border:1px solid var(--dz-line);border-radius:10px;paddi
 .dz-card{background:var(--dz-surface);border:1px solid var(--dz-line);border-radius:16px;padding:18px;margin-bottom:16px}
 .dz-card-title{font-size:17px;font-weight:700;margin:0 0 12px}
 .dz-hidden{display:none!important}
+/* App Check (reCAPTCHA): o selo flutuante some; o aviso fica em .dz-legal, como o Google exige */
+.grecaptcha-badge{visibility:hidden}
+.dz-legal{font-size:11px;line-height:1.5;color:var(--dz-dim);text-align:center;margin:12px 0 0}
+.dz-legal a{color:var(--dz-dim);text-decoration:underline}

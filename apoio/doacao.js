@@ -177,7 +177,8 @@
     </div>
     <div class="dz-star-label" data-star-label></div>
     <button class="dz-btn" data-enviar="avaliar" disabled>Enviar avaliação</button>
-    <div class="dz-status" data-status="avaliar"></div>`;
+    <div class="dz-status" data-status="avaliar"></div>
+    <p class="dz-legal">Protegido por reCAPTCHA. Valem a <a href="https://policies.google.com/privacy" target="_blank" rel="noopener noreferrer">Privacidade</a> e os <a href="https://policies.google.com/terms" target="_blank" rel="noopener noreferrer">Termos</a> do Google.</p>`;
 
   const htmlSugerir = () => `
     <p class="dz-text">Ideia, problema ou elogio: tudo chega direto para quem desenvolve os apps.</p>
@@ -195,7 +196,8 @@
     </div>
     <input class="dz-trap" type="text" name="site" tabindex="-1" autocomplete="off" aria-hidden="true" data-trap>
     <button class="dz-btn" data-enviar="sugerir">Enviar mensagem</button>
-    <div class="dz-status" data-status="sugerir"></div>`;
+    <div class="dz-status" data-status="sugerir"></div>
+    <p class="dz-legal">Protegido por reCAPTCHA. Valem a <a href="https://policies.google.com/privacy" target="_blank" rel="noopener noreferrer">Privacidade</a> e os <a href="https://policies.google.com/terms" target="_blank" rel="noopener noreferrer">Termos</a> do Google.</p>`;
 
   // ── comportamento de cada seção (recebe o elemento que a contém)
   const escopo = (el) => [(s) => el.querySelector(s), (s) => [...el.querySelectorAll(s)]];

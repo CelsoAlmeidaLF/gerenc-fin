@@ -1,4 +1,4 @@
-const CACHE_NAME = 'livro-caixa-v1.9.0';
+const CACHE_NAME = 'livro-caixa-v1.9.1';
 const APP_SHELL = [
   './index.html',
   './ledger-engine.js',
