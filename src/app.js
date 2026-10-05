@@ -152,13 +152,12 @@
       dialog.append.apply(dialog, dialogHead(title, text, danger === false ? 'info' : 'alert', danger !== false).concat([actions]));
     });
   }
-  /** Modal de baixa: data, valor efetivamente pago (e conta, se houver mais de uma). Resolve {data, valorPago, contaId} ou null. */
+  /** Modal de baixa: data e valor efetivamente pago. Resolve {data, valorPago} ou null. */
   function askPayment(o){
     return dialogBox(function(dialog, close){
       var form = document.createElement('form'); form.method = 'dialog'; form.className = 'pay-form';
-      var contas = state.contas.length > 1 ? '<label>Conta<select name="conta">' + state.contas.map(function(c){ return '<option value="' + escapeHtml(c.id) + '">' + escapeHtml(c.nome) + '</option>'; }).join('') + '</select></label>' : '';
       form.innerHTML = '<label>Data do pagamento<input type="date" name="data" required max="' + hoje() + '" value="' + hoje() + '"></label>' +
-        '<label>Valor pago (R$)<input type="number" name="valor" step="0.01" min="0.01" max="999999999.99" required value="' + Engine.centsToInput(o.valor) + '"></label>' + contas +
+        '<label>Valor pago (R$)<input type="number" name="valor" step="0.01" min="0.01" max="999999999.99" required value="' + Engine.centsToInput(o.valor) + '"></label>' +
         '<p class="vault-dim pay-diff" aria-live="polite"></p>';
       var diff = form.querySelector('.pay-diff'), inValor = form.elements.valor;
       var update = function(){
@@ -174,7 +173,7 @@
         ev.preventDefault();
         var c = Engine.parseCents(inValor.value);
         if (!(c > 0) || c > Engine.MAX_CENTS) { inValor.setCustomValidity('Informe um valor válido.'); inValor.reportValidity(); return; }
-        close({ data: form.elements.data.value, valorPago: c, contaId: form.elements.conta ? form.elements.conta.value : undefined });
+        close({ data: form.elements.data.value, valorPago: c });
       };
       inValor.addEventListener('input', function(){ inValor.setCustomValidity(''); });
       dialog.append.apply(dialog, dialogHead(o.title, o.text, 'check').concat([form]));
@@ -378,45 +377,6 @@
     document.getElementById('sumDividas').textContent = fmt(Engine.debtSaldoTotal(state));
   }
 
-  function contaOptions(){ return state.contas.map(function(c){ return '<option value="' + escapeHtml(c.id) + '">' + escapeHtml(c.nome) + '</option>'; }).join(''); }
-  function renderConta(){
-    var h = hoje();
-    var total = Engine.saldoAtual(state, h);
-    var el = document.getElementById('sumSaldoConta');
-    el.textContent = total === null ? '—' : fmt(total);
-    if (total !== null) setSaldoColor(el, total); else el.style.color = '';
-    document.getElementById('sumSaldoContaSub').textContent = total === null ? 'cadastre em Conta' : '';
-    document.getElementById('eContaLabel').hidden = state.contas.length < 2;
-    var sel = document.getElementById('eConta'); var prev = sel.value; sel.innerHTML = contaOptions(); if (prev) sel.value = prev;
-
-    document.getElementById('listContas').innerHTML = state.contas.length ? state.contas.map(function(c){
-      var saldo = Engine.saldoConta(state, c.id, h);
-      return rowHtml({ id: c.id, title: escapeHtml(c.nome), meta: 'saldo inicial ' + fmt(c.saldoInicial) + ' em ' + dateBR(c.dataSaldoInicial),
-        amt: fmt(saldo), amtClass: saldo < 0 ? 'neg' : 'pos', paid: false, actions: [{label:'excluir', cls:'del', action:'del-conta'}] });
-    }).join('') : '<div class="empty">nenhuma conta cadastrada. Informe o saldo atual e a data para acompanhar o saldo real.</div>';
-
-    document.getElementById('conciliacao').innerHTML = state.contas.length ? state.contas.map(function(c){
-      var saved = state.reconciliacao[c.id], res = saved ? Engine.reconcile(state, c.id, saved.saldoBanco, h) : null, msg = '', cls = '';
-      if (res) {
-        cls = res.status === 'ok' ? 'ok' : res.status === 'pendentes' ? 'mid' : 'bad';
-        msg = 'Banco ' + fmt(res.saldoBanco) + ' (informado em ' + dateBR(saved.data) + ') · app ' + fmt(res.saldoApp) + ' · diferença ' + fmt(res.diferenca) + '. ' +
-          (res.status === 'ok' ? 'Saldos conferem.' : res.status === 'pendentes'
-            ? 'A diferença é explicada por ' + res.pendentes.qtd + ' lançamento(s) ainda não conferido(s) (' + fmt(res.pendentes.liquido) + ').'
-            : 'Sobra diferença de ' + fmt(res.diferencaConciliado) + ' que os lançamentos pendentes não explicam: confira os movimentos abaixo.');
-      }
-      return '<div class="rec-box" data-conta="' + escapeHtml(c.id) + '"><div class="t">' + escapeHtml(c.nome) + ' · saldo no app ' + fmt(Engine.saldoConta(state, c.id, h)) + '</div>' +
-        '<form class="rec"><label>Saldo informado pelo banco (R$)<input type="number" step="0.01" min="-999999999.99" max="999999999.99" required name="banco" value="' + (saved ? Engine.centsToInput(saved.saldoBanco) : '') + '"></label><button type="submit">Comparar</button></form>' +
-        (msg ? '<div class="rec-result ' + cls + '">' + escapeHtml(msg) + '</div>' : '') + '</div>';
-    }).join('') : '<div class="empty">cadastre uma conta para conciliar.</div>';
-
-    var movs = Engine.realizedMovements(state, h).slice(0, 80);
-    document.getElementById('listMovimentos').innerHTML = movs.length ? movs.map(function(m){
-      return rowHtml({ id: m.id, title: escapeHtml(m.descricao) + (m.conferido ? ' <span class="tag paid">conferido</span>' : ''),
-        meta: (m.tipo === 'entrada' ? 'entrada em ' : 'saída em ') + dateBR(m.data), amt: fmt(Math.abs(m.valor)), amtClass: m.tipo === 'entrada' ? 'pos' : 'neg', paid: false,
-        actions: [{label: m.conferido ? 'desmarcar' : 'conferir', cls: m.conferido ? '' : 'pay', action: 'conf-' + m.tipo}] });
-    }).join('') : '<div class="empty">nenhum movimento realizado desde o saldo inicial.</div>';
-  }
-
   function fillCategorySelects(){
     document.querySelectorAll('select[data-cat]').forEach(function(sel){
       var prev = sel.value || sel.dataset.default || 'Outros';
@@ -457,10 +417,10 @@
   function renderProjecao(){
     var ps = Engine.projectionAll(state, hoje());
     document.getElementById('projecao').innerHTML = '<div class="proj-grid">' + ps.map(function(p){
-      var neg = p.saldoProjetado < 0;
+      var neg = p.resultado < 0;
       return '<div class="rec-box"><div class="t">próximos ' + p.dias + ' dias · até ' + dateBR(p.ate) + '</div>' +
-        '<div class="value num" style="font-size:1.1rem;font-weight:600;color:var(' + (neg ? '--rust' : '--green') + ')">' + fmt(p.saldoProjetado) + '</div>' +
-        '<div class="rec-result">' + (p.temConta ? 'saldo hoje ' + fmt(p.saldoInicial) : 'sem conta cadastrada: parte de R$ 0,00') + '<br>' +
+        '<div class="value num" style="font-size:1.1rem;font-weight:600;color:var(' + (neg ? '--rust' : '--green') + ')">' + fmt(p.resultado) + '</div>' +
+        '<div class="rec-result">' +
         '+ entradas esperadas ' + fmt(p.entradas) + '<br>− despesas em aberto ' + fmt(p.saidas.despesas) + '<br>− parcelas de dívidas ' + fmt(p.saidas.dividas) + '<br>− faturas previstas ' + fmt(p.saidas.cartao) +
         (p.atrasadas ? '<br>(inclui ' + fmt(p.atrasadas) + ' em atraso)' : '') + '</div></div>';
     }).join('') + '</div>';
@@ -471,7 +431,6 @@
     renderEntradas();
     renderCartao();
     renderDividas();
-    renderConta();
     fillCategorySelects();
     renderRelatorio();
     renderRecorrencias();
@@ -525,29 +484,10 @@
     var desc = document.getElementById('eDesc').value.trim();
     var data = document.getElementById('eData').value;
     if (!(valor > 0) || !desc || !data) return;
-    var catE = document.getElementById('eCat').value, contaE = state.contas.length > 1 ? document.getElementById('eConta').value : '';
-    if (document.getElementById('eRep').value === 'mensal') Engine.addRecurrence(state, {tipo: 'entrada', valor: valor, descricao: desc, inicio: data, categoria: catE, contaId: contaE});
-    else state.income.push(Engine.makeIncome({valor: valor, descricao: desc, data: data, categoria: catE, contaId: contaE}));
+    var catE = document.getElementById('eCat').value;
+    if (document.getElementById('eRep').value === 'mensal') Engine.addRecurrence(state, {tipo: 'entrada', valor: valor, descricao: desc, inicio: data, categoria: catE});
+    else state.income.push(Engine.makeIncome({valor: valor, descricao: desc, data: data, categoria: catE}));
     this.reset();
-    commit();
-  });
-
-  document.getElementById('formConta').addEventListener('submit', function(e){
-    e.preventDefault();
-    var saldo = Engine.parseCents(document.getElementById('kSaldo').value), data = document.getElementById('kData').value;
-    var nome = document.getElementById('kNome').value.trim();
-    if (saldo === null || Math.abs(saldo) > Engine.MAX_CENTS || !nome || !data) return;
-    Engine.addAccount(state, {nome: nome, saldoInicial: saldo, dataSaldoInicial: data});
-    this.reset(); document.getElementById('kData').value = hoje();
-    commit();
-  });
-
-  document.getElementById('conciliacao').addEventListener('submit', function(e){
-    var form = e.target.closest('form.rec'); if (!form) return;
-    e.preventDefault();
-    var contaId = form.closest('.rec-box').dataset.conta, banco = Engine.parseCents(form.elements.banco.value);
-    if (banco === null || Math.abs(banco) > Engine.MAX_CENTS) return;
-    state.reconciliacao[contaId] = {saldoBanco: banco, data: hoje()};
     commit();
   });
 
@@ -670,13 +610,6 @@
       if (!await askConfirm({title: 'Desfazer o último pagamento?', text: 'A parcela ' + ud.pagas[ud.pagas.length-1].parcela + ' volta a ficar em aberto e a despesa gerada é removida.', action: 'Desfazer', danger: true})) return;
       r = Engine.undoDebtPayment(state, id);
       if (!r.ok) { await showMessage('Não foi possível desfazer', r.erro); return; }
-    } else if (action === 'conf-entrada' || action === 'conf-saida') {
-      var tipoM = action === 'conf-entrada' ? 'entrada' : 'saida';
-      var alvo = tipoM === 'entrada' ? state.income.find(function(x){return x.id===id;}) : Engine.findExpense(state, id);
-      if (alvo) Engine.setConferido(state, tipoM, id, !alvo.conferido);
-    } else if (action === 'del-conta') {
-      if (!await askConfirm({title: 'Excluir esta conta?', text: 'Os lançamentos continuam existindo e passam a valer para a primeira conta.', action: 'Excluir', danger: true})) return;
-      Engine.removeAccount(state, id);
     } else if (action === 'toggle-rec') {
       var rc = state.recorrencias.find(function(x){return x.id===id;});
       if (rc) Engine.setRecurrenceActive(state, id, !rc.ativa);
