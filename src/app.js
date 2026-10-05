@@ -440,6 +440,9 @@
 
   // ---------- ações no menu do perfil ----------
   var clickById = function(id){ return function(){ document.getElementById(id).click(); }; };
+  FinancSettings.addSection({ title: 'Relatórios', rows: [
+    { icon: 'file-text', label: 'Relatório do mês', description: 'Resultado, categorias, orçamento e projeção', onClick: function(){ openReport(); } },
+  ] });
   FinancSettings.addSection({ title: 'Dados e backup', rows: [
     { icon: 'download', label: 'Exportar backup (JSON)', description: 'Arquivo criptografado com PIN próprio.', onClick: clickById('btnExport') },
     { icon: 'upload', label: 'Importar backup (JSON)', description: 'Restaura um backup exportado.', onClick: clickById('btnImport') },
@@ -457,6 +460,29 @@
       document.getElementById('panel-'+btn.dataset.tab).classList.add('active');
     });
   });
+
+  // ---------- relatório: tela própria aberta pelo menu ⋮ ----------
+  // Entra no histórico para o "voltar" do celular fechar o relatório em vez de sair do app.
+  function openReport(){
+    if (document.body.classList.contains('report-mode')) return;
+    document.querySelectorAll('section.panel').forEach(function(p){p.classList.remove('active');});
+    document.getElementById('panel-relatorio').classList.add('active');
+    document.body.classList.add('report-mode');
+    history.pushState({lcReport: true}, '');
+    window.scrollTo(0, 0);
+    // Depois do menu ⋮ devolver o foco ao botão dele (evento close do dialog).
+    setTimeout(function(){ document.getElementById('reportTitle').focus({preventScroll: true}); }, 0);
+  }
+  function closeReport(){
+    if (!document.body.classList.contains('report-mode')) return;
+    document.body.classList.remove('report-mode');
+    var tab = document.querySelector('nav.tabs button.active') || document.querySelector('nav.tabs button');
+    tab.click(); tab.focus({preventScroll: true});
+  }
+  document.getElementById('btnReportBack').addEventListener('click', function(){
+    if (history.state && history.state.lcReport) history.back(); else closeReport();
+  });
+  window.addEventListener('popstate', closeReport);
 
   // Depois de qualquer mudança: gera as ocorrências recorrentes que faltam, salva e redesenha.
   function commit(){ Engine.materializeRecurrences(state, hoje()); save(); renderAll(); }

@@ -12,7 +12,7 @@ com o cofre local; não há servidor, conta nem serviço pago.
   reabrir fatura ainda não paga.
 - **Dívidas**: parcelas com vencimento estável no mês, saldo devedor, valor contratado e taxa (informativos),
   pagar parcela (gera despesa paga) e desfazer.
-- **Relatório**: resultado do mês (receitas, fixas, variáveis, dívidas), despesas por categoria, orçamento mensal
+- **Relatório** (menu ⋮ → Relatório do mês, em tela própria): resultado do mês (receitas, fixas, variáveis, dívidas), despesas por categoria, orçamento mensal
   por categoria e projeção de caixa em 30/60/90 dias.
 - Backup criptografado (Configurações), tema claro/escuro conforme o sistema, funciona offline (service worker).
 
