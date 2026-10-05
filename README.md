@@ -12,7 +12,6 @@ com o cofre local; não há servidor, conta nem serviço pago.
   reabrir fatura ainda não paga.
 - **Dívidas**: parcelas com vencimento estável no mês, saldo devedor, valor contratado e taxa (informativos),
   pagar parcela (gera despesa paga) e desfazer.
-- **Conta**: saldo inicial + data, saldo atual real e conciliação simples com o saldo do banco.
 - **Relatório**: resultado do mês (receitas, fixas, variáveis, dívidas), despesas por categoria, orçamento mensal
   por categoria e projeção de caixa em 30/60/90 dias.
 - Backup criptografado (Configurações), tema claro/escuro conforme o sistema, funciona offline (service worker).
@@ -24,7 +23,6 @@ com o cofre local; não há servidor, conta nem serviço pago.
 - **Realizado (caixa)** do mês: entradas com data até hoje + despesas pagas pela *data do pagamento* (valor efetivamente pago).
 - **Previsto (competência)** do mês: despesas pelo *vencimento* + parcelas de dívidas do mês + faturas previstas do
   cartão que vencem no mês. **Em atraso**: em aberto com vencimento antes do mês.
-- **Saldo atual** = saldo inicial + entradas realizadas − saídas realizadas, contando só movimentos a partir da data do saldo inicial.
 - **Cartão**: a compra entra no ciclo pela data (até o dia de fechamento, inclusive); fechamento em dia inexistente
   vai para o último dia do mês; vencimento = primeiro dia de vencimento depois do fechamento. Fatura só pode ser
   fechada depois da data de fechamento e gera uma despesa vinculada.
@@ -33,7 +31,7 @@ com o cofre local; não há servidor, conta nem serviço pago.
   preservado (31/01 → 28/02 → 31/03).
 - **Relatório mensal** é por competência: compras no cartão contam na data de cada parcela (a despesa da fatura não é contada de novo).
 - **Orçamento**: alertas em 70% e 90% do valor definido para a categoria.
-- **Projeção**: saldo atual + entradas esperadas − despesas em aberto (inclui atrasadas) − parcelas de dívidas − faturas previstas.
+- **Projeção**: entradas esperadas − despesas em aberto (inclui atrasadas) − parcelas de dívidas − faturas previstas no período.
 
 ## Estrutura
 
@@ -52,3 +50,5 @@ npm test        # node --test test/
 
 Estados e backups sem `schemaVersion` (valores em reais) são migrados na abertura/importação para centavos, com
 valores padrão nos campos novos. Backups exportados antes desta versão continuam abrindo.
+A partir da v1.10.0 o app não tem mais a aba Conta: contas, conciliação e o vínculo de lançamentos com contas
+são descartados ao abrir ou importar dados antigos; os lançamentos em si continuam.

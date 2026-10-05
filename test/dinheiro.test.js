@@ -70,7 +70,28 @@ test('migração: estado legado (reais, float, sem schemaVersion) vira centavos'
   assert.deepEqual(s.debts[0].pagas, []);
   assert.equal(s.debts[0].categoria, 'Dívidas');
   assert.ok(s.categorias.includes('Outros'));
-  assert.deepEqual(s.contas, []);
+  assert.equal(s.contas, undefined);
+});
+
+test('estado e backup antigos com contas: contas, conciliação e vínculos são descartados, lançamentos ficam', () => {
+  const s = E.normalizeState({
+    schemaVersion: 2,
+    contas: [{ id: 'c1', nome: 'Corrente', saldoInicial: 100000, dataSaldoInicial: '2026-09-01' }],
+    reconciliacao: { c1: { saldoBanco: 120000, data: '2026-09-30' } },
+    expenses: [{ id: 'e1', valor: 5000, descricao: 'Luz', vencimento: '2026-09-10', pago: true, dataPagamento: '2026-09-09', valorPago: 5000, contaId: 'c1', conferido: true }],
+    income: [{ id: 'i1', valor: 300000, descricao: 'Salário', data: '2026-09-05', contaId: 'c1', conferido: true }],
+    recorrencias: [{ id: 'r1', tipo: 'entrada', valor: 300000, descricao: 'Salário', inicio: '2026-09-05', contaId: 'c1' }]
+  });
+  assert.equal(s.contas, undefined);
+  assert.equal(s.reconciliacao, undefined);
+  assert.equal(s.expenses.length, 1);
+  assert.equal(s.income.length, 1);
+  assert.equal(s.recorrencias.length, 1);
+  for (const x of [s.expenses[0], s.income[0], s.recorrencias[0]]) {
+    assert.equal(x.contaId, undefined);
+    assert.equal(x.conferido, undefined);
+  }
+  assert.equal(E.addAccount, undefined);
 });
 
 test('M8: fatura sem despesaId fica com vínculo vazio; com id existente marca a origem da despesa', () => {

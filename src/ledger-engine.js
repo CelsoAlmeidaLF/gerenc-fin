@@ -101,8 +101,6 @@
       schemaVersion: SCHEMA_VERSION,
       categorias: CATEGORIAS_PADRAO.slice(),
       orcamentos: {},
-      contas: [],
-      reconciliacao: {},
       recorrencias: [],
       expenses: [],
       income: [],
@@ -125,13 +123,6 @@
     (Array.isArray(source.categorias) ? source.categorias : []).slice(0, 100).forEach(function (c) { c = safeText(c).slice(0, 40); if (c) cats[c] = true; });
     var addCat = function (c) { c = safeText(c).slice(0, 40); if (c) cats[c] = true; return c; };
     var cat = function (v, def) { return addCat(v) || def || 'Outros'; };
-    var contas = {};
-
-    out.contas = list(source.contas).slice(0, 50).map(function (x) {
-      return { id: safeId(x.id), nome: safeText(x.nome) || 'Conta', saldoInicial: safeSigned(x.saldoInicial, emCentavos), dataSaldoInicial: safeDate(x.dataSaldoInicial) };
-    }).filter(function (x) { return x.dataSaldoInicial; });
-    out.contas.forEach(function (c) { contas[c.id] = true; });
-    var contaId = function (v) { v = safeId(v, true); return contas[v] ? v : ''; };
 
     out.expenses = list(source.expenses).map(function (x) {
       var valor = money(x.valor), pago = x.pago === true, venc = safeDate(x.vencimento);
@@ -143,7 +134,6 @@
         dataPagamento: pago ? dataPag : null,
         valorPago: pago ? (x.valorPago === null || x.valorPago === undefined ? valor : money(x.valorPago)) : null,
         categoria: cat(x.categoria), natureza: x.natureza === 'fixa' ? 'fixa' : 'variavel',
-        contaId: contaId(x.contaId), conferido: x.conferido === true && pago,
         origem: tipoOrigem ? { tipo: tipoOrigem, id: safeId(o.id, true), parcela: safeInt(o.parcela, 0, 1200, 0) } : null,
         recorrenciaId: safeId(x.recorrenciaId, true), competencia: /^\d{4}-\d{2}$/.test(String(x.competencia || '')) ? String(x.competencia) : ''
       };
@@ -152,7 +142,7 @@
     out.income = list(source.income).map(function (x) {
       return {
         id: safeId(x.id), valor: money(x.valor), descricao: safeText(x.descricao), data: safeDate(x.data),
-        categoria: cat(x.categoria, 'Outros'), contaId: contaId(x.contaId), conferido: x.conferido === true,
+        categoria: cat(x.categoria, 'Outros'),
         recorrenciaId: safeId(x.recorrenciaId, true), competencia: /^\d{4}-\d{2}$/.test(String(x.competencia || '')) ? String(x.competencia) : ''
       };
     }).filter(function (x) { return x.descricao && x.data; });
@@ -203,7 +193,7 @@
       return {
         id: safeId(x.id), tipo: x.tipo === 'entrada' ? 'entrada' : 'despesa', valor: money(x.valor), descricao: safeText(x.descricao),
         dia: safeInt(x.dia, 1, 31, 1), inicio: safeDate(x.inicio), fim: safeDate(x.fim) || '', categoria: cat(x.categoria),
-        natureza: x.natureza === 'variavel' ? 'variavel' : 'fixa', contaId: contaId(x.contaId), ativa: x.ativa !== false,
+        natureza: x.natureza === 'variavel' ? 'variavel' : 'fixa', ativa: x.ativa !== false,
         ignoradas: (Array.isArray(x.ignoradas) ? x.ignoradas : []).filter(function (m) { return /^\d{4}-\d{2}$/.test(String(m)); }).slice(0, 600)
       };
     }).filter(function (x) { return x.descricao && x.inicio && x.valor > 0; });
@@ -211,30 +201,20 @@
     var orc = source.orcamentos && typeof source.orcamentos === 'object' && !Array.isArray(source.orcamentos) ? source.orcamentos : {};
     Object.keys(orc).slice(0, 100).forEach(function (k) { var c = addCat(k); var v = money(orc[k]); if (c && v > 0) out.orcamentos[c] = v; });
 
-    var rec = source.reconciliacao && typeof source.reconciliacao === 'object' ? source.reconciliacao : {};
-    Object.keys(rec).forEach(function (k) {
-      if (contas[k] && rec[k] && typeof rec[k] === 'object') out.reconciliacao[k] = { saldoBanco: safeSigned(rec[k].saldoBanco, emCentavos), data: safeDate(rec[k].data) };
-    });
-
     out.categorias = Object.keys(cats);
     return out;
-  }
-  /** Como safeCents, mas aceita saldos negativos (conta no vermelho). */
-  function safeSigned(value, emCentavos) {
-    var n = emCentavos ? Math.round(Number(value)) : parseCents(typeof value === 'number' || typeof value === 'string' ? value : null);
-    return Number.isFinite(n) && Math.abs(n) <= MAX_CENTS ? n : 0;
   }
 
   // ---------- fábricas de lançamentos (já no formato do schema atual) ----------
   function makeExpense(o) {
     return {
       id: o.id || uid(), valor: o.valor, descricao: o.descricao, vencimento: o.vencimento, pago: false, dataPagamento: null, valorPago: null,
-      categoria: o.categoria || 'Outros', natureza: o.natureza === 'fixa' ? 'fixa' : 'variavel', contaId: o.contaId || '', conferido: false,
+      categoria: o.categoria || 'Outros', natureza: o.natureza === 'fixa' ? 'fixa' : 'variavel',
       origem: o.origem || null, recorrenciaId: o.recorrenciaId || '', competencia: o.competencia || ''
     };
   }
   function makeIncome(o) {
-    return { id: o.id || uid(), valor: o.valor, descricao: o.descricao, data: o.data, categoria: o.categoria || 'Outros', contaId: o.contaId || '', conferido: false, recorrenciaId: o.recorrenciaId || '', competencia: o.competencia || '' };
+    return { id: o.id || uid(), valor: o.valor, descricao: o.descricao, data: o.data, categoria: o.categoria || 'Outros', recorrenciaId: o.recorrenciaId || '', competencia: o.competencia || '' };
   }
 
   // ---------- despesas: baixa, estorno, exclusão (M1, M3, M8) ----------
@@ -242,7 +222,6 @@
   function findDebt(state, id) { return state.debts.find(function (d) { return d.id === id; }); }
   /** Diferença entre o valor pago e o valor da despesa: > 0 juros/multa, < 0 desconto (M1). */
   function expenseAjuste(e) { return e.pago && e.valorPago !== null ? e.valorPago - e.valor : 0; }
-  function defaultContaId(state) { return state.contas.length ? state.contas[0].id : ''; }
 
   /** Dá baixa numa despesa com data e valor efetivamente pagos. `hoje` é usado só para barrar data futura. */
   function payExpense(state, id, opts, hoje) {
@@ -254,8 +233,7 @@
     if (hoje && data > hoje) return { ok: false, erro: 'A data do pagamento não pode ser futura.' };
     var valorPago = opts.valorPago === undefined || opts.valorPago === null ? e.valor : opts.valorPago;
     if (!Number.isInteger(valorPago) || valorPago <= 0 || valorPago > MAX_CENTS) return { ok: false, erro: 'Informe um valor pago válido.' };
-    e.pago = true; e.dataPagamento = data; e.valorPago = valorPago; e.conferido = false;
-    if (opts.contaId !== undefined) e.contaId = state.contas.some(function (c) { return c.id === opts.contaId; }) ? opts.contaId : '';
+    e.pago = true; e.dataPagamento = data; e.valorPago = valorPago;
     return { ok: true, ajuste: valorPago - e.valor };
   }
   /** Estorna um pagamento: a despesa volta a "em aberto". Para parcela de dívida, desfaz a parcela. */
@@ -264,7 +242,7 @@
     if (!e) return { ok: false, erro: 'Despesa não encontrada.' };
     if (!e.pago) return { ok: false, erro: 'Esta despesa não está paga.' };
     if (e.origem && e.origem.tipo === 'divida') return undoDebtPayment(state, e.origem.id, e.id);
-    e.pago = false; e.dataPagamento = null; e.valorPago = null; e.conferido = false;
+    e.pago = false; e.dataPagamento = null; e.valorPago = null;
     return { ok: true };
   }
   /** Regras de exclusão: despesa vinculada a fatura ou a parcela de dívida não pode sumir em silêncio (M8). */
@@ -314,8 +292,7 @@
     var despesa = {
       id: uid(), valor: d.valorParcela, descricao: d.descricao + ' (parcela ' + parcela + '/' + d.parcelas + ')', vencimento: venc,
       pago: true, dataPagamento: data, valorPago: valorPago, categoria: d.categoria, natureza: 'fixa',
-      contaId: opts.contaId !== undefined && state.contas.some(function (c) { return c.id === opts.contaId; }) ? opts.contaId : '',
-      conferido: false, origem: { tipo: 'divida', id: d.id, parcela: parcela }, recorrenciaId: '', competencia: ''
+      origem: { tipo: 'divida', id: d.id, parcela: parcela }, recorrenciaId: '', competencia: ''
     };
     state.expenses.push(despesa);
     d.pagas.push({ parcela: parcela, vencimento: venc, despesaId: despesa.id });
@@ -432,78 +409,6 @@
     return { ok: true, devolvidos: f.itens.length };
   }
 
-  // ---------- contas, saldo real e conciliação (A2) ----------
-  function addAccount(state, o) {
-    var nome = safeText(o.nome) || 'Conta';
-    if (!isValidISO(o.dataSaldoInicial)) return { ok: false, erro: 'Informe a data do saldo inicial.' };
-    var saldo = safeSigned(o.saldoInicial, true);
-    var conta = { id: uid(), nome: nome, saldoInicial: saldo, dataSaldoInicial: o.dataSaldoInicial };
-    state.contas.push(conta);
-    return { ok: true, conta: conta };
-  }
-  function removeAccount(state, id) {
-    state.contas = state.contas.filter(function (c) { return c.id !== id; });
-    state.expenses.forEach(function (e) { if (e.contaId === id) e.contaId = ''; });
-    state.income.forEach(function (i) { if (i.contaId === id) i.contaId = ''; });
-    state.recorrencias.forEach(function (r) { if (r.contaId === id) r.contaId = ''; });
-    delete state.reconciliacao[id];
-  }
-  /** Conta a que o item pertence; itens sem conta valem para a primeira conta cadastrada. */
-  function contaDoItem(state, item) {
-    if (!state.contas.length) return '';
-    return state.contas.some(function (c) { return c.id === item.contaId; }) ? item.contaId : state.contas[0].id;
-  }
-  /** Movimentos realizados (entradas com data <= hoje e despesas pagas) a partir do saldo inicial da conta, mais recentes primeiro.
-   *  `valor` vem com sinal: entrada positiva, saída negativa. */
-  function realizedMovements(state, hoje, contaId) {
-    var out = [], contas = {};
-    state.contas.forEach(function (c) { contas[c.id] = c; });
-    state.income.forEach(function (i) {
-      var cid = contaDoItem(state, i), c = contas[cid];
-      if (!c || (contaId && cid !== contaId) || i.data < c.dataSaldoInicial || i.data > hoje) return;
-      out.push({ tipo: 'entrada', id: i.id, contaId: cid, data: i.data, descricao: i.descricao, valor: i.valor, conferido: !!i.conferido });
-    });
-    state.expenses.forEach(function (e) {
-      if (!e.pago) return;
-      var cid = contaDoItem(state, e), c = contas[cid];
-      if (!c || (contaId && cid !== contaId) || e.dataPagamento < c.dataSaldoInicial || e.dataPagamento > hoje) return;
-      out.push({ tipo: 'saida', id: e.id, contaId: cid, data: e.dataPagamento, descricao: e.descricao, valor: -(e.valorPago === null ? e.valor : e.valorPago), conferido: !!e.conferido });
-    });
-    return out.sort(function (a, b) { return b.data.localeCompare(a.data) || (a.id < b.id ? -1 : 1); });
-  }
-  /** Saldo atual = saldo inicial + entradas realizadas − saídas realizadas (desde a data do saldo inicial). */
-  function saldoConta(state, contaId, hoje) {
-    var c = state.contas.find(function (x) { return x.id === contaId; });
-    if (!c) return null;
-    return c.saldoInicial + sum(realizedMovements(state, hoje, contaId), function (m) { return m.valor; });
-  }
-  /** Saldo total das contas; null se ainda não há conta cadastrada. */
-  function saldoAtual(state, hoje) {
-    if (!state.contas.length) return null;
-    return sum(state.contas, function (c) { return saldoConta(state, c.id, hoje); });
-  }
-  function setConferido(state, tipo, id, valor) {
-    var item = tipo === 'entrada' ? state.income.find(function (x) { return x.id === id; }) : findExpense(state, id);
-    if (!item || (tipo !== 'entrada' && !item.pago)) return false;
-    item.conferido = !!valor; return true;
-  }
-  /** Compara o saldo informado pelo banco com o do app.
-   *  status: "ok" (bate), "pendentes" (a diferença some se todos os lançamentos pendentes de conferência já constarem no banco),
-   *  "divergente" (sobra diferença que não se explica pelos pendentes). */
-  function reconcile(state, contaId, saldoBanco, hoje) {
-    var c = state.contas.find(function (x) { return x.id === contaId; });
-    if (!c) return { ok: false, erro: 'Conta não encontrada.' };
-    var movs = realizedMovements(state, hoje, contaId);
-    var app = c.saldoInicial + sum(movs, function (m) { return m.valor; });
-    var conciliado = c.saldoInicial + sum(movs.filter(function (m) { return m.conferido; }), function (m) { return m.valor; });
-    var pend = movs.filter(function (m) { return !m.conferido; });
-    var status = saldoBanco === app ? 'ok' : saldoBanco === conciliado ? 'pendentes' : 'divergente';
-    return {
-      ok: true, saldoApp: app, saldoBanco: saldoBanco, diferenca: saldoBanco - app, saldoConciliado: conciliado,
-      diferencaConciliado: saldoBanco - conciliado, pendentes: { qtd: pend.length, liquido: sum(pend, function (m) { return m.valor; }) }, status: status
-    };
-  }
-
   // ---------- categorias, relatório mensal e orçamento (M4) ----------
   function addCategory(state, nome) {
     var c = safeText(nome).slice(0, 40);
@@ -567,7 +472,7 @@
     var r = {
       id: uid(), tipo: o.tipo === 'entrada' ? 'entrada' : 'despesa', valor: o.valor, descricao: descricao, dia: parseISO(o.inicio).d, inicio: o.inicio,
       fim: isValidISO(o.fim) ? o.fim : '', categoria: addCategory(state, o.categoria) || 'Outros', natureza: o.natureza === 'variavel' ? 'variavel' : 'fixa',
-      contaId: o.contaId || '', ativa: true, ignoradas: []
+      ativa: true, ignoradas: []
     };
     state.recorrencias.push(r);
     return { ok: true, recorrencia: r };
@@ -584,8 +489,8 @@
       for (var guard = 0; mk <= ate && guard < 1200; guard++, mk = addMonthKey(mk, 1)) {
         var data = addMonths(monthStart(mk), 0, r.dia);
         if (data < r.inicio || (r.fim && data > r.fim) || tem[mk] || r.ignoradas.indexOf(mk) >= 0) continue;
-        if (r.tipo === 'entrada') state.income.push(makeIncome({ valor: r.valor, descricao: r.descricao, data: data, categoria: r.categoria, contaId: r.contaId, recorrenciaId: r.id, competencia: mk }));
-        else state.expenses.push(makeExpense({ valor: r.valor, descricao: r.descricao, vencimento: data, categoria: r.categoria, natureza: r.natureza, contaId: r.contaId, recorrenciaId: r.id, competencia: mk }));
+        if (r.tipo === 'entrada') state.income.push(makeIncome({ valor: r.valor, descricao: r.descricao, data: data, categoria: r.categoria, recorrenciaId: r.id, competencia: mk }));
+        else state.expenses.push(makeExpense({ valor: r.valor, descricao: r.descricao, vencimento: data, categoria: r.categoria, natureza: r.natureza, recorrenciaId: r.id, competencia: mk }));
         criadas++;
       }
     });
@@ -609,7 +514,7 @@
   // ---------- projeção de caixa 30/60/90 dias (M6) ----------
   /** Projeta o caixa até `dias` à frente: despesas em aberto (inclui atrasadas e faturas já fechadas), parcelas de dívidas,
    *  faturas previstas dos ciclos abertos do cartão e entradas esperadas (datas futuras, inclusive recorrentes).
-   *  Parte do saldo atual das contas (0 se não houver conta). Não altera o estado. */
+   *  `resultado` = entradas esperadas − saídas previstas no período. Não altera o estado. */
   function projection(state, hoje, dias) {
     var st = JSON.parse(JSON.stringify(state));
     materializeRecurrences(st, hoje);
@@ -621,12 +526,12 @@
     var dividas = 0, dividasAtrasadas = 0;
     st.debts.forEach(function (d) { debtInstallments(d).forEach(function (p) { if (p.vencimento <= fim) { dividas += p.valor; if (p.vencimento < hoje) dividasAtrasadas += p.valor; } }); });
     var cartao = sum(openCycles(st).filter(function (c) { return c.total > 0 && c.vencimento <= fim; }), function (c) { return c.total; });
-    var saldoInicial = saldoAtual(st, hoje), saidas = despesas + dividas + cartao;
+    var saidas = despesas + dividas + cartao;
     return {
-      dias: dias, ate: fim, temConta: saldoInicial !== null, saldoInicial: saldoInicial || 0, entradas: entradas,
+      dias: dias, ate: fim, entradas: entradas,
       saidas: { despesas: despesas, dividas: dividas, cartao: cartao, total: saidas },
       atrasadas: sum(atrasadas, function (e) { return e.valor; }) + dividasAtrasadas,
-      saldoProjetado: (saldoInicial || 0) + entradas - saidas
+      resultado: entradas - saidas
     };
   }
   function projectionAll(state, hoje) { return [30, 60, 90].map(function (d) { return projection(state, hoje, d); }); }
@@ -668,9 +573,9 @@
     makeISO: makeISO, addDays: addDays, addMonths: addMonths, monthKey: monthKey, monthStart: monthStart,
     monthEnd: monthEnd, addMonthKey: addMonthKey,
     SCHEMA_VERSION: SCHEMA_VERSION, MAX_CENTS: MAX_CENTS, CATEGORIAS_PADRAO: CATEGORIAS_PADRAO,
-    parseCents: parseCents, safeCents: safeCents, safeSigned: safeSigned, fmtBRL: fmtBRL, centsToInput: centsToInput, sum: sum, uid: uid, freshState: freshState,
+    parseCents: parseCents, safeCents: safeCents, fmtBRL: fmtBRL, centsToInput: centsToInput, sum: sum, uid: uid, freshState: freshState,
     normalizeState: normalizeState, defaultVencimentoDia: defaultVencimentoDia,
-    makeExpense: makeExpense, makeIncome: makeIncome, findExpense: findExpense, findDebt: findDebt, expenseAjuste: expenseAjuste, defaultContaId: defaultContaId,
+    makeExpense: makeExpense, makeIncome: makeIncome, findExpense: findExpense, findDebt: findDebt, expenseAjuste: expenseAjuste,
     payExpense: payExpense, unpayExpense: unpayExpense, canDeleteExpense: canDeleteExpense, deleteExpense: deleteExpense,
     debtRemainingCount: debtRemainingCount, debtSaldo: debtSaldo, debtSaldoTotal: debtSaldoTotal, debtInstallments: debtInstallments,
     payDebtInstallment: payDebtInstallment, undoDebtPayment: undoDebtPayment, monthSummary: monthSummary,
@@ -678,8 +583,6 @@
     faturaDespesa: faturaDespesa, faturaEmAberto: faturaEmAberto, cardOpenTotal: cardOpenTotal, cardInvoicesUnpaid: cardInvoicesUnpaid,
     cardUsed: cardUsed, cardAvailable: cardAvailable, splitInstallments: splitInstallments, addCardPurchase: addCardPurchase,
     closeInvoice: closeInvoice, reopenInvoice: reopenInvoice, deleteCardItem: deleteCardItem,
-    addAccount: addAccount, removeAccount: removeAccount, contaDoItem: contaDoItem, realizedMovements: realizedMovements,
-    saldoConta: saldoConta, saldoAtual: saldoAtual, setConferido: setConferido, reconcile: reconcile,
     addCategory: addCategory, monthReport: monthReport, setBudget: setBudget, budgetStatus: budgetStatus,
     HORIZONTE_DIAS: HORIZONTE_DIAS, addRecurrence: addRecurrence, materializeRecurrences: materializeRecurrences,
     dueStatus: dueStatus, setRecurrenceActive: setRecurrenceActive, removeRecurrence: removeRecurrence, projection: projection, projectionAll: projectionAll

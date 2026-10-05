@@ -72,7 +72,6 @@ test('M5: valida entrada e sobrevive à normalização', () => {
 
 function base() {
   const s = E.freshState();
-  E.addAccount(s, { nome: 'C', saldoInicial: 100000, dataSaldoInicial: '2026-09-01' });
   Object.assign(s.card, { limite: 300000, fechamento: 25, vencimentoDia: 5 });
   return s;
 }
@@ -90,12 +89,12 @@ test('M6: projeção 30/60/90 soma despesas em aberto, parcelas, faturas previst
   assert.deepEqual(p30.saidas, { despesas: 50000, dividas: 10000, cartao: 40000, total: 100000 });
   assert.equal(p30.entradas, 90000);
   assert.equal(p30.atrasadas, 20000);
-  assert.equal(p30.saldoInicial, 100000);
-  assert.equal(p30.saldoProjetado, 100000 + 90000 - 100000);
+  assert.equal(p30.resultado, 90000 - 100000);
+  assert.equal(p30.saldoInicial, undefined);
   assert.equal(p60.saidas.despesas, 120000);
   assert.equal(p60.saidas.dividas, 20000);                        // parcelas de 05/10 e 05/11
   assert.equal(p90.saidas.dividas, 30000);                        // + 05/12
-  assert.ok(p60.saldoProjetado < p30.saldoProjetado);
+  assert.ok(p60.resultado < p30.resultado);
 });
 
 test('M6: projeção inclui recorrências e não altera o estado', () => {
@@ -109,13 +108,11 @@ test('M6: projeção inclui recorrências e não altera o estado', () => {
   assert.equal(JSON.stringify(s), antes);
 });
 
-test('M6: sem conta cadastrada parte de zero; parcelas pagas e despesas pagas não entram', () => {
+test('M6: despesas pagas não entram na projeção', () => {
   const s = E.freshState();
   s.expenses.push(E.makeExpense({ valor: 5000, descricao: 'Paga', vencimento: '2026-10-05' }));
   E.payExpense(s, s.expenses[0].id, { data: '2026-09-30' }, '2026-09-30');
   const p = E.projection(s, '2026-09-30', 30);
-  assert.equal(p.temConta, false);
-  assert.equal(p.saldoInicial, 0);
   assert.equal(p.saidas.total, 0);
-  assert.equal(p.saldoProjetado, 0);
+  assert.equal(p.resultado, 0);
 });
