@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="pt-BR" class="vault-locked" data-vault-version="1.10.0" data-vault-app="gerenc-fin" data-vault-name="Livro-Caixa">
+<html lang="pt-BR" class="vault-locked" data-vault-version="1.11.0" data-vault-app="gerenc-fin" data-vault-name="Livro-Caixa">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -115,6 +115,11 @@
   section.panel { display: none; }
   section.panel.active { display: block; animation: fade .18s ease; }
   @media (prefers-reduced-motion: reduce) { section.panel.active { animation: none; } }
+  /* Relatório: aberto pelo menu ⋮, em tela própria sem resumo nem abas */
+  body.report-mode .sum-title, body.report-mode .ledger-summary, body.report-mode nav.tabs { display: none; }
+  .report-head { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; margin-bottom: 16px; }
+  .report-head h2 { margin: 0; font-size: 1.3rem; font-weight: 700; outline: none; }
+  .report-back { display: inline-flex; align-items: center; gap: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 0.8rem; color: var(--accent); background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 8px 14px; cursor: pointer; }
   @keyframes fade { from { opacity: 0; transform: translateY(3px);} to { opacity: 1; transform: translateY(0);} }
 
   .section-title {
@@ -391,7 +396,6 @@
     <button data-tab="entradas">Entradas</button>
     <button data-tab="cartao">Cartão</button>
     <button data-tab="dividas">Dívidas</button>
-    <button data-tab="relatorio">Relatório</button>
   </nav>
 
   <!-- DESPESAS -->
@@ -479,7 +483,11 @@
   </section>
 
   <!-- RELATORIO: mês, orçamento e projeção -->
-  <section class="panel" id="panel-relatorio">
+  <section class="panel" id="panel-relatorio" aria-labelledby="reportTitle">
+    <div class="report-head">
+      <button type="button" class="report-back" id="btnReportBack"><i data-icon="arrow-left" data-size="16"></i> lançamentos</button>
+      <h2 id="reportTitle" tabindex="-1">Relatório do mês</h2>
+    </div>
     <form class="entry" id="formMes" onsubmit="return false">
       <label>Mês do relatório<input type="month" id="rMes" required></label>
     </form>
