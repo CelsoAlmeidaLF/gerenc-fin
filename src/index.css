@@ -337,3 +337,17 @@
     }
   }
   nav.tabs button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; white-space: nowrap; }
+
+  /* Cartão: configuração oculta atrás do botão Configurar */
+  .card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 26px 0 10px; }
+  .card-head .section-title { margin: 0; }
+  .cfg-toggle, .cfg-cancel {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--surface-2); color: var(--ink-dim); border: 1px solid var(--line);
+    border-radius: 999px; padding: 6px 12px; font: 500 0.78rem 'Space Grotesk', sans-serif; cursor: pointer;
+  }
+  .cfg-toggle:hover, .cfg-toggle.active, .cfg-cancel:hover { color: var(--ink); border-color: var(--accent-dim); }
+  .cfg-cancel { justify-content: center; border-radius: 10px; padding: 10px 12px; }
+  form.entry[hidden] { display: none; }
+  #formConfigCartao { margin-bottom: 14px; }
+

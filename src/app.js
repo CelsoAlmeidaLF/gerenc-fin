@@ -253,6 +253,15 @@
     }).join('') : '<div class="empty">nenhuma entrada lançada.</div>';
   }
 
+  // Configuração do cartão (limite, fechamento, vencimento) fica oculta; o botão Configurar abre e fecha.
+  function setConfigCartaoAberto(aberto){
+    document.getElementById('formConfigCartao').hidden = !aberto;
+    var btn = document.getElementById('btnConfigCartao');
+    btn.setAttribute('aria-expanded', aberto ? 'true' : 'false');
+    btn.classList.toggle('active', aberto);
+    if (aberto) document.getElementById('cLimite').focus();
+  }
+
   function renderCartao(){
     var c = state.card;
     document.getElementById('cLimite').value = c.limite ? Engine.centsToInput(c.limite) : '';
@@ -275,6 +284,7 @@
     else if (pct >= 70) bar.classList.add('warn');
 
     document.getElementById('cartaoConfigInfo').innerHTML =
+      (c.limite > 0 ? '' : '<span>limite não definido: toque em <b>Configurar</b></span>') +
       'fecha todo dia <b>' + (c.fechamento||'-') + '</b> &nbsp;·&nbsp; vence dia <b>' + (c.vencimentoDia||'-') + '</b> &nbsp;·&nbsp; disponível <b>' + fmt(disponivel) + '</b>' +
       '<span>em aberto <b>' + fmt(Math.max(0, Engine.cardOpenTotal(state))) + '</b> &nbsp;·&nbsp; faturas a pagar <b>' + fmt(Engine.cardInvoicesUnpaid(state)) + '</b></span>';
 
@@ -538,7 +548,15 @@
       state.card.limite = limite;
       state.card.fechamento = fechamento;
       state.card.vencimentoDia = venc;
+      setConfigCartaoAberto(false);
       commit();
+    },
+    btnConfigCartao_click: function() {
+      setConfigCartaoAberto(document.getElementById('formConfigCartao').hidden);
+    },
+    btnConfigCancelar_click: function() {
+      setConfigCartaoAberto(false);
+      renderCartao();
     },
     formCartao_submit: function(e) {
       e.preventDefault();
@@ -717,6 +735,8 @@
     document.getElementById('rMes').addEventListener('input', UiEvents.rMes_input);
     document.getElementById('listOrcamentos').addEventListener('click', UiEvents.listOrcamentos_click);
     document.getElementById('formConfigCartao').addEventListener('submit', UiEvents.formConfigCartao_submit);
+    document.getElementById('btnConfigCartao').addEventListener('click', UiEvents.btnConfigCartao_click);
+    document.getElementById('btnConfigCancelar').addEventListener('click', UiEvents.btnConfigCancelar_click);
     document.getElementById('formCartao').addEventListener('submit', UiEvents.formCartao_submit);
     document.getElementById('formDivida').addEventListener('submit', UiEvents.formDivida_submit);
     document.querySelector('.wrap').addEventListener('click', UiEvents.wrap_click);
