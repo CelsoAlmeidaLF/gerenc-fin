@@ -1,5 +1,5 @@
 /*!
- * feedback.js — adaptador de avaliações e sugestões
+ * stk-pkg-feedback.js — adaptador de avaliações e sugestões
  * Backend atual: Firebase Firestore.
  * Para migrar (self-hosted), reescreva só as 3 funções de BACKEND mantendo a mesma interface:
  *   Feedback.avaliar(app, nota)            → Promise<void>
