@@ -1,11 +1,11 @@
 /*!
- * doacao.js v2 — painel Apoiar · Avaliar · Sugerir para os apps Systekna
+ * stk-pkg-doacao.js v2 — painel Apoiar · Avaliar · Sugerir para os apps Systekna
  * Padrão visual: Design System — Registro Evolutivo
  *
  * Uso (dentro de cada app):
  *   <link rel="stylesheet" href="../shared/apoio.css" id="dz-style">  ← opcional: evita piscar sem estilo
- *   <script src="../shared/feedback.js"></script>              ← opcional: ativa Avaliar e Sugerir
- *   <script src="../shared/doacao.js" data-app="LIVROCAIXA"></script>
+ *   <script src="../shared/stk-pkg-feedback.js"></script>              ← opcional: ativa Avaliar e Sugerir
+ *   <script src="../shared/stk-pkg-doacao.js" data-app="LIVROCAIXA"></script>
  *
  *   Doacao.abrir()           → Apoiar (Pix)
  *   Doacao.abrir('btc')      → Apoiar (Bitcoin)
@@ -34,7 +34,7 @@
   const APP_ID = limparTxid((script && script.dataset.app) || 'APPS');
   const FLUTUANTE = !(script && script.dataset.flutuante === 'false');
   // Biblioteca de QR servida do próprio repositório (integridade + funciona offline)
-  const QR_LIB = new URL('qrcode.js', (script && script.src) || location.href).href;
+  const QR_LIB = new URL('stk-pkg-qrcode.js', (script && script.src) || location.href).href;
 
   // ───────────── PIX (BR Code / EMV) ─────────────
   function semAcento(s) {
@@ -392,7 +392,7 @@
     injetarEstilo();
     const el = typeof alvo === 'string' ? document.querySelector(alvo) : alvo;
     if (!el) throw new Error('Doacao.embutir: elemento não encontrado');
-    if (secao !== 'apoiar' && !window.Feedback) throw new Error('Doacao.embutir: carregue feedback.js antes');
+    if (secao !== 'apoiar' && !window.Feedback) throw new Error('Doacao.embutir: carregue stk-pkg-feedback.js antes');
     // Se os campos já estão escritos no HTML, só liga o comportamento neles
     const existente = el.matches('.dz-card') ? el : el.querySelector('.dz-card');
     if (existente) {
