@@ -36,7 +36,9 @@ com o cofre local; não há servidor, conta nem serviço pago.
 ## Estrutura
 
 - `src/ledger-engine.js`: regras de cálculo (funções puras, UMD; roda no navegador e no Node).
-- `src/app.js`: interface e persistência; `src/secure-*.js`: cofre compartilhado (não alterar aqui).
+- `src/app.js`: interface e persistência; `src/index.css`: estilo do app.
+- `src/stk-pkg-secure-vault.js`, `src/stk-pkg-secure-ui.js/.css` e `src/stk-pkg-financ-icons.js`: cofre, PIN e ícones (cópias de `PACOTES/stk-pkg-security/`; não alterar aqui).
+- `src/apoio/`: painel de apoio e log de erros (cópias de `PACOTES/stk-pkg-doacao/shared/`).
 - `test/`: testes com `node --test`, sem dependências.
 - `docs/auditoria-financeira-2026-09.md`: achados da auditoria e o que foi corrigido.
 
@@ -45,6 +47,18 @@ com o cofre local; não há servidor, conta nem serviço pago.
 ```
 npm test        # node --test test/
 ```
+
+Suítes: `dinheiro`, `datas`, `cartao`, `dividas-baixas`, `recorrencia-projecao`, `relatorio`, `apoio` (CSP e Firebase do painel) e `stk-pkg-erros` (limpeza do log). Situação em 08/10/2026 (v1.13.0): 81 testes passando.
+
+Ao mudar o app, troque `data-vault-version` no `index.html` e a versão do cache no `sw.js`.
+
+## Apoio, avaliação e log de erros
+
+- `src/apoio/` traz cópias de `PACOTES/stk-pkg-doacao/shared/` (não editar aqui), com id `LIVROCAIXA`.
+- **Menu ⋮ → Apoiar · Avaliar · Sugerir:** doação (Pix e Bitcoin), nota de 1 a 5 e sugestão. Vai para o Firestore `systekna-feedback`, protegido por App Check.
+- **Configurações → Relatórios de erro** (`stk-pkg-erros.js`, primeiro script do `<head>`): guarda no aparelho os últimos erros. Valores, e-mails, textos e parâmetros de URL viram `***` antes de guardar. Dá para ver, copiar, enviar e limpar.
+- **Envio só com permissão:** com o **Modo testador** ligado (vale para todos os apps do aparelho), o app envia sozinho. Desligado, pergunta "Enviar relatório?" uma vez por sessão. O dono lê na aba **Erros** do painel de feedback.
+- Nenhum dado financeiro sai do aparelho. Só a avaliação, a sugestão e o relatório técnico de erro são enviados.
 
 ## Dados antigos
 
