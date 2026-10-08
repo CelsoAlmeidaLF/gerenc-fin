@@ -1,4 +1,4 @@
-const CACHE_NAME = 'livro-caixa-v1.12.0';
+const CACHE_NAME = 'livro-caixa-v1.13.0';
 const APP_SHELL = [
   './index.html',
   './index.css',
@@ -11,6 +11,7 @@ const APP_SHELL = [
   './apoio/apoio.css',
   './apoio/stk-pkg-doacao.js',
   './apoio/stk-pkg-feedback.js',
+  './apoio/stk-pkg-erros.js',
   './apoio/stk-pkg-qrcode.js',
   './fonts/fonts.css',
   './fonts/ibm-plex-mono-latin-400.woff2',

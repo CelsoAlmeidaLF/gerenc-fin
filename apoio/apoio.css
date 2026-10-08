@@ -67,3 +67,21 @@ background:var(--dz-bg);border:1px solid var(--dz-line);border-radius:10px;paddi
 .grecaptcha-badge{visibility:hidden}
 .dz-legal{font-size:11px;line-height:1.5;color:var(--dz-dim);text-align:center;margin:12px 0 0}
 .dz-legal a{color:var(--dz-dim);text-decoration:underline}
+/* Relatórios de erro (stk-pkg-erros.js): aviso discreto e lista */
+.dz-toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(16px + env(safe-area-inset-bottom,0px));z-index:9999;
+width:calc(100% - 32px);max-width:440px;display:flex;align-items:center;gap:10px;background:var(--dz-surface-2);
+border:1px solid var(--dz-line);border-radius:14px;padding:10px 10px 10px 14px;box-shadow:0 8px 24px rgba(0,0,0,.35)}
+.dz-toast-txt{flex:1;min-width:0;font-size:13px;line-height:1.4;color:var(--dz-ink)}
+.dz-toast-btn{flex:0 0 auto;font-family:'IBM Plex Mono',monospace;font-size:12.5px;font-weight:600;border:none;border-radius:999px;
+background:var(--dz-accent);color:var(--dz-bg);padding:8px 14px;cursor:pointer}
+.dz-toast-x{flex:0 0 auto;background:none;border:none;color:var(--dz-dim);font-size:20px;line-height:1;cursor:pointer;padding:4px 6px}
+.dz-err-switch{display:flex;align-items:flex-start;gap:10px;font-size:13px;line-height:1.45;color:var(--dz-ink);
+background:var(--dz-bg);border:1px solid var(--dz-line);border-radius:12px;padding:12px;margin-bottom:14px;cursor:pointer}
+.dz-err-switch input{flex:0 0 auto;width:18px;height:18px;margin:1px 0 0;accent-color:var(--dz-accent)}
+.dz-err-vazio{font-family:'IBM Plex Mono',monospace;font-size:12.5px;color:var(--dz-dim);text-align:center;margin:8px 0 16px}
+.dz-err-lista{list-style:none;margin:0 0 14px;padding:0;border:1px solid var(--dz-line);border-radius:12px;max-height:40vh;overflow-y:auto}
+.dz-err-item{padding:10px 12px;border-bottom:1px solid var(--dz-line)}
+.dz-err-item:last-child{border-bottom:0}
+.dz-err-msg{font-family:'IBM Plex Mono',monospace;font-size:12.5px;line-height:1.45;color:var(--dz-ink);overflow-wrap:anywhere}
+.dz-err-meta{font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--dz-dim);margin-top:4px;overflow-wrap:anywhere}
+.dz-err-acoes{display:flex;justify-content:center;gap:8px;margin-top:10px}
