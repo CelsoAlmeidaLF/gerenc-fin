@@ -253,6 +253,15 @@
     }).join('') : '<div class="empty">nenhuma entrada lançada.</div>';
   }
 
+  // Configuração do cartão (limite, fechamento, vencimento) fica oculta; o botão Configurar abre e fecha.
+  function setConfigCartaoAberto(aberto){
+    document.getElementById('formConfigCartao').hidden = !aberto;
+    var btn = document.getElementById('btnConfigCartao');
+    btn.setAttribute('aria-expanded', aberto ? 'true' : 'false');
+    btn.classList.toggle('active', aberto);
+    if (aberto) document.getElementById('cLimite').focus();
+  }
+
   function renderCartao(){
     var c = state.card;
     document.getElementById('cLimite').value = c.limite ? Engine.centsToInput(c.limite) : '';
@@ -275,6 +284,7 @@
     else if (pct >= 70) bar.classList.add('warn');
 
     document.getElementById('cartaoConfigInfo').innerHTML =
+      (c.limite > 0 ? '' : '<span>limite não definido: toque em <b>Configurar</b></span>') +
       'fecha todo dia <b>' + (c.fechamento||'-') + '</b> &nbsp;·&nbsp; vence dia <b>' + (c.vencimentoDia||'-') + '</b> &nbsp;·&nbsp; disponível <b>' + fmt(disponivel) + '</b>' +
       '<span>em aberto <b>' + fmt(Math.max(0, Engine.cardOpenTotal(state))) + '</b> &nbsp;·&nbsp; faturas a pagar <b>' + fmt(Engine.cardInvoicesUnpaid(state)) + '</b></span>';
 
@@ -491,231 +501,259 @@
   // Lê um campo de valor (reais) e devolve centavos inteiros; 0 se vazio, inválido ou acima do teto (B5).
   function readAmount(id){ var c = Engine.parseCents(document.getElementById(id).value); return c > 0 && c <= Engine.MAX_CENTS ? c : 0; }
 
-  document.getElementById('formDespesa').addEventListener('submit', function(e){
-    e.preventDefault();
-    var valor = readAmount('dValor');
-    var desc = document.getElementById('dDesc').value.trim();
-    var venc = document.getElementById('dVenc').value;
-    if (!(valor > 0) || !desc || !venc) return;
-    var catD = document.getElementById('dCat').value, natD = document.getElementById('dNat').value;
-    if (document.getElementById('dRep').value === 'mensal') Engine.addRecurrence(state, {tipo: 'despesa', valor: valor, descricao: desc, inicio: venc, categoria: catD, natureza: natD});
-    else state.expenses.push(Engine.makeExpense({valor: valor, descricao: desc, vencimento: venc, categoria: catD, natureza: natD}));
-    this.reset();
-    commit();
-  });
-
-  document.getElementById('formEntrada').addEventListener('submit', function(e){
-    e.preventDefault();
-    var valor = readAmount('eValor');
-    var desc = document.getElementById('eDesc').value.trim();
-    var data = document.getElementById('eData').value;
-    if (!(valor > 0) || !desc || !data) return;
-    var catE = document.getElementById('eCat').value;
-    if (document.getElementById('eRep').value === 'mensal') Engine.addRecurrence(state, {tipo: 'entrada', valor: valor, descricao: desc, inicio: data, categoria: catE});
-    else state.income.push(Engine.makeIncome({valor: valor, descricao: desc, data: data, categoria: catE}));
-    this.reset();
-    commit();
-  });
-
-  document.getElementById('formOrcamento').addEventListener('submit', function(e){
-    e.preventDefault();
-    var cents = Engine.parseCents(document.getElementById('oValor').value);
-    var r = Engine.setBudget(state, document.getElementById('oCat').value, cents === null ? -1 : cents);
-    if (!r.ok) { showMessage('Orçamento inválido', r.erro); return; }
-    this.reset(); commit();
-  });
-  document.getElementById('rMes').addEventListener('input', renderRelatorio);
-  document.getElementById('listOrcamentos').addEventListener('click', function(e){
-    var b = e.target.closest('[data-action="del-orcamento"]'); if (!b) return;
-    e.stopPropagation();
-    Engine.setBudget(state, b.closest('[data-cat]').dataset.cat, 0); commit();
-  });
-
-  document.getElementById('formConfigCartao').addEventListener('submit', function(e){
-    e.preventDefault();
-    var limite = readAmount('cLimite');
-    var fechamento = Math.min(31, Math.max(1, parseInt(document.getElementById('cFechamento').value) || 1));
-    var venc = Math.min(31, Math.max(1, parseInt(document.getElementById('cVencimento').value) || Engine.defaultVencimentoDia(fechamento)));
-    state.card.limite = limite;
-    state.card.fechamento = fechamento;
-    state.card.vencimentoDia = venc;
-    commit();
-  });
-
-  document.getElementById('formCartao').addEventListener('submit', function(e){
-    e.preventDefault();
-    var valor = readAmount('ccValor');
-    var desc = document.getElementById('ccDesc').value.trim();
-    var data = document.getElementById('ccData').value;
-    if (!(valor > 0) || !desc || !data) return;
-    var tipo = document.getElementById('ccTipo').value;
-    var parcelas = Math.min(48, Math.max(1, parseInt(document.getElementById('ccParcelas').value) || 1));
-    Engine.addCardPurchase(state, {valor: valor, descricao: desc, data: data, tipo: tipo, parcelas: parcelas, categoria: document.getElementById('ccCat').value});
-    this.reset();
-    document.getElementById('ccData').value = hoje();
-    commit();
-  });
-
-  document.getElementById('formDivida').addEventListener('submit', function(e){
-    e.preventDefault();
-    var valorParcela = readAmount('vValor');
-    var desc = document.getElementById('vDesc').value.trim();
-    var parcelas = Math.min(1200, Math.max(1, parseInt(document.getElementById('vParcelas').value) || 1));
-    var venc = document.getElementById('vVenc').value;
-    if (!(valorParcela > 0) || !desc || !venc) return;
-    var contratado = readAmount('vContratado');
-    var taxaTxt = document.getElementById('vTaxa').value.replace(',', '.'), taxa = taxaTxt === '' ? NaN : Number(taxaTxt);
-    state.debts.push({id: uid(), valorParcela: valorParcela, descricao: desc, parcelas: parcelas, parcelaAtual: 1, vencimento: venc,
-      diaOriginal: Engine.parseISO(venc).d, pago: false, pagas: [], valorContratado: contratado > 0 ? contratado : null,
-      taxa: Number.isFinite(taxa) && taxa >= 0 && taxa <= 1000 ? taxa : null, categoria: 'Dívidas'});
-    this.reset();
-    document.getElementById('vParcelas').value = 1;
-    document.getElementById('vVenc').value = hoje();
-    commit();
-  });
-
-  // ---------- row actions (event delegation) ----------
-  document.querySelector('.wrap').addEventListener('click', async function(e){
-    var btn = e.target.closest('button[data-action]');
-    if (!btn) return;
-    var row = btn.closest('.row');
-    if (!row) return;
-    var id = row.dataset.id;
-    var action = btn.dataset.action;
-    var r;
-
-    if (action === 'pay-expense') {
-      var exp = Engine.findExpense(state, id);
-      if (!exp) return;
-      var pg = await askPayment({title: 'Pagar "' + exp.descricao + '"', text: 'Vencimento em ' + dateBR(exp.vencimento) + ' · valor ' + fmt(exp.valor) + '. Informe quando e quanto foi pago.', valor: exp.valor});
-      if (!pg) return;
-      r = Engine.payExpense(state, id, pg, hoje());
-      if (!r.ok) { await showMessage('Não foi possível pagar', r.erro); return; }
-    } else if (action === 'unpay-expense') {
-      var pe = Engine.findExpense(state, id);
-      if (!pe) return;
-      var ok = await askConfirm({title: 'Estornar o pagamento?', text: '"' + pe.descricao + '" volta para "em aberto"' + (pe.origem && pe.origem.tipo === 'divida' ? ' e a parcela volta para a aba Dívidas.' : '.'), action: 'Estornar', danger: true});
-      if (!ok) return;
-      r = Engine.unpayExpense(state, id);
-      if (!r.ok) { await showMessage('Não foi possível estornar', r.erro); return; }
-    } else if (action === 'del-expense') {
-      var chk = Engine.canDeleteExpense(state, id);
-      if (!chk.ok) { await showMessage('Exclusão bloqueada', chk.motivo); return; }
-      if (!await askConfirm({title: 'Excluir esta despesa?', text: 'Esta ação não pode ser desfeita.', action: 'Excluir', danger: true})) return;
-      Engine.deleteExpense(state, id);
-    } else if (action === 'del-income') {
-      if (!await askConfirm({title: 'Excluir esta entrada?', text: 'Esta ação não pode ser desfeita.', action: 'Excluir', danger: true})) return;
-      state.income = state.income.filter(function(x){return x.id!==id;});
-    } else if (action === 'del-card-item') {
-      var item = state.card.lancamentos.find(function(x){return x.id===id;});
-      if (!item) return;
-      var restantes = item.compraId ? state.card.lancamentos.filter(function(x){return x.compraId===item.compraId;}).length : 1;
-      if (!await askConfirm({title: restantes > 1 ? 'Excluir a compra parcelada?' : 'Excluir este lançamento do cartão?', text: restantes > 1 ? 'Serão removidas as ' + restantes + ' parcelas ainda em aberto desta compra.' : 'Esta ação não pode ser desfeita.', action: 'Excluir', danger: true})) return;
-      Engine.deleteCardItem(state, id);
-    } else if (action === 'close-invoice') {
-      r = Engine.closeInvoice(state, id, hoje());
-      if (!r.ok) { await showMessage('Não foi possível fechar', r.erro); return; }
+  // ---------- Dicionário de Eventos UI ----------
+  var UiEvents = {
+    formDespesa_submit: function(e) {
+      e.preventDefault();
+      var valor = readAmount('dValor');
+      var desc = document.getElementById('dDesc').value.trim();
+      var venc = document.getElementById('dVenc').value;
+      if (!(valor > 0) || !desc || !venc) return;
+      var catD = document.getElementById('dCat').value, natD = document.getElementById('dNat').value;
+      if (document.getElementById('dRep').value === 'mensal') Engine.addRecurrence(state, {tipo: 'despesa', valor: valor, descricao: desc, inicio: venc, categoria: catD, natureza: natD});
+      else state.expenses.push(Engine.makeExpense({valor: valor, descricao: desc, vencimento: venc, categoria: catD, natureza: natD}));
+      document.getElementById('formDespesa').reset();
       commit();
-      if (r.despesa) document.querySelector('nav.tabs button[data-tab="despesas"]').click();
-      else await showMessage('Fatura sem valor a pagar', 'Os créditos cobriram as compras do ciclo. A sobra abate a próxima fatura.', false);
-      return;
-    } else if (action === 'reopen-invoice') {
-      if (!await askConfirm({title: 'Reabrir esta fatura?', text: 'Os lançamentos voltam para o cartão e a despesa da fatura é removida de Despesas.', action: 'Reabrir', danger: true})) return;
-      r = Engine.reopenInvoice(state, id);
-      if (!r.ok) { await showMessage('Não foi possível reabrir', r.erro); return; }
-    } else if (action === 'pay-debt') {
-      var d = Engine.findDebt(state, id);
-      if (!d) return;
-      var pd = await askPayment({title: 'Pagar parcela ' + d.parcelaAtual + '/' + d.parcelas, text: d.descricao + ' · vencimento ' + dateBR(d.vencimento) + '. O pagamento vira uma despesa paga em Despesas.', valor: d.valorParcela, action: 'Pagar parcela'});
-      if (!pd) return;
-      r = Engine.payDebtInstallment(state, id, pd, hoje());
-      if (!r.ok) { await showMessage('Não foi possível pagar', r.erro); return; }
-    } else if (action === 'undo-debt') {
-      var ud = Engine.findDebt(state, id);
-      if (!ud || !ud.pagas.length) return;
-      if (!await askConfirm({title: 'Desfazer o último pagamento?', text: 'A parcela ' + ud.pagas[ud.pagas.length-1].parcela + ' volta a ficar em aberto e a despesa gerada é removida.', action: 'Desfazer', danger: true})) return;
-      r = Engine.undoDebtPayment(state, id);
-      if (!r.ok) { await showMessage('Não foi possível desfazer', r.erro); return; }
-    } else if (action === 'toggle-rec') {
-      var rc = state.recorrencias.find(function(x){return x.id===id;});
-      if (rc) Engine.setRecurrenceActive(state, id, !rc.ativa);
-    } else if (action === 'del-rec') {
-      if (!await askConfirm({title: 'Excluir esta recorrência?', text: 'As ocorrências futuras ainda não pagas serão removidas. O que já passou continua no histórico.', action: 'Excluir', danger: true})) return;
-      Engine.removeRecurrence(state, id, hoje());
-    } else if (action === 'del-debt') {
-      if (!await askConfirm({title: 'Excluir esta dívida?', text: 'As despesas já geradas por parcelas pagas continuam em Despesas.', action: 'Excluir', danger: true})) return;
-      state.debts = state.debts.filter(function(x){return x.id!==id;});
-      state.expenses.forEach(function(x){ if (x.origem && x.origem.tipo === 'divida' && x.origem.id === id) x.origem = null; });
+    },
+    formEntrada_submit: function(e) {
+      e.preventDefault();
+      var valor = readAmount('eValor');
+      var desc = document.getElementById('eDesc').value.trim();
+      var data = document.getElementById('eData').value;
+      if (!(valor > 0) || !desc || !data) return;
+      var catE = document.getElementById('eCat').value;
+      if (document.getElementById('eRep').value === 'mensal') Engine.addRecurrence(state, {tipo: 'entrada', valor: valor, descricao: desc, inicio: data, categoria: catE});
+      else state.income.push(Engine.makeIncome({valor: valor, descricao: desc, data: data, categoria: catE}));
+      document.getElementById('formEntrada').reset();
+      commit();
+    },
+    formOrcamento_submit: function(e) {
+      e.preventDefault();
+      var cents = Engine.parseCents(document.getElementById('oValor').value);
+      var r = Engine.setBudget(state, document.getElementById('oCat').value, cents === null ? -1 : cents);
+      if (!r.ok) { showMessage('Orçamento inválido', r.erro); return; }
+      document.getElementById('formOrcamento').reset(); commit();
+    },
+    rMes_input: renderRelatorio,
+    listOrcamentos_click: function(e) {
+      var b = e.target.closest('[data-action="del-orcamento"]'); if (!b) return;
+      e.stopPropagation();
+      Engine.setBudget(state, b.closest('[data-cat]').dataset.cat, 0); commit();
+    },
+    formConfigCartao_submit: function(e) {
+      e.preventDefault();
+      var limite = readAmount('cLimite');
+      var fechamento = Math.min(31, Math.max(1, parseInt(document.getElementById('cFechamento').value) || 1));
+      var venc = Math.min(31, Math.max(1, parseInt(document.getElementById('cVencimento').value) || Engine.defaultVencimentoDia(fechamento)));
+      state.card.limite = limite;
+      state.card.fechamento = fechamento;
+      state.card.vencimentoDia = venc;
+      setConfigCartaoAberto(false);
+      commit();
+    },
+    btnConfigCartao_click: function() {
+      setConfigCartaoAberto(document.getElementById('formConfigCartao').hidden);
+    },
+    btnConfigCancelar_click: function() {
+      setConfigCartaoAberto(false);
+      renderCartao();
+    },
+    formCartao_submit: function(e) {
+      e.preventDefault();
+      var valor = readAmount('ccValor');
+      var desc = document.getElementById('ccDesc').value.trim();
+      var data = document.getElementById('ccData').value;
+      if (!(valor > 0) || !desc || !data) return;
+      var tipo = document.getElementById('ccTipo').value;
+      var parcelas = Math.min(48, Math.max(1, parseInt(document.getElementById('ccParcelas').value) || 1));
+      Engine.addCardPurchase(state, {valor: valor, descricao: desc, data: data, tipo: tipo, parcelas: parcelas, categoria: document.getElementById('ccCat').value});
+      document.getElementById('formCartao').reset();
+      document.getElementById('ccData').value = hoje();
+      commit();
+    },
+    formDivida_submit: function(e) {
+      e.preventDefault();
+      var valorParcela = readAmount('vValor');
+      var desc = document.getElementById('vDesc').value.trim();
+      var parcelas = Math.min(1200, Math.max(1, parseInt(document.getElementById('vParcelas').value) || 1));
+      var venc = document.getElementById('vVenc').value;
+      if (!(valorParcela > 0) || !desc || !venc) return;
+      var contratado = readAmount('vContratado');
+      var taxaTxt = document.getElementById('vTaxa').value.replace(',', '.'), taxa = taxaTxt === '' ? NaN : Number(taxaTxt);
+      state.debts.push({id: uid(), valorParcela: valorParcela, descricao: desc, parcelas: parcelas, parcelaAtual: 1, vencimento: venc,
+        diaOriginal: Engine.parseISO(venc).d, pago: false, pagas: [], valorContratado: contratado > 0 ? contratado : null,
+        taxa: Number.isFinite(taxa) && taxa >= 0 && taxa <= 1000 ? taxa : null, categoria: 'Dívidas'});
+      document.getElementById('formDivida').reset();
+      document.getElementById('vParcelas').value = 1;
+      document.getElementById('vVenc').value = hoje();
+      commit();
+    },
+    wrap_click: async function(e) {
+      var btn = e.target.closest('button[data-action]');
+      if (!btn) return;
+      var row = btn.closest('.row');
+      if (!row) return;
+      var id = row.dataset.id;
+      var action = btn.dataset.action;
+      var r;
+
+      if (action === 'pay-expense') {
+        var exp = Engine.findExpense(state, id);
+        if (!exp) return;
+        var pg = await askPayment({title: 'Pagar "' + exp.descricao + '"', text: 'Vencimento em ' + dateBR(exp.vencimento) + ' · valor ' + fmt(exp.valor) + '. Informe quando e quanto foi pago.', valor: exp.valor});
+        if (!pg) return;
+        r = Engine.payExpense(state, id, pg, hoje());
+        if (!r.ok) { await showMessage('Não foi possível pagar', r.erro); return; }
+      } else if (action === 'unpay-expense') {
+        var pe = Engine.findExpense(state, id);
+        if (!pe) return;
+        var ok = await askConfirm({title: 'Estornar o pagamento?', text: '"' + pe.descricao + '" volta para "em aberto"' + (pe.origem && pe.origem.tipo === 'divida' ? ' e a parcela volta para a aba Dívidas.' : '.'), action: 'Estornar', danger: true});
+        if (!ok) return;
+        r = Engine.unpayExpense(state, id);
+        if (!r.ok) { await showMessage('Não foi possível estornar', r.erro); return; }
+      } else if (action === 'del-expense') {
+        var chk = Engine.canDeleteExpense(state, id);
+        if (!chk.ok) { await showMessage('Exclusão bloqueada', chk.motivo); return; }
+        if (!await askConfirm({title: 'Excluir esta despesa?', text: 'Esta ação não pode ser desfeita.', action: 'Excluir', danger: true})) return;
+        Engine.deleteExpense(state, id);
+      } else if (action === 'del-income') {
+        if (!await askConfirm({title: 'Excluir esta entrada?', text: 'Esta ação não pode ser desfeita.', action: 'Excluir', danger: true})) return;
+        state.income = state.income.filter(function(x){return x.id!==id;});
+      } else if (action === 'del-card-item') {
+        var item = state.card.lancamentos.find(function(x){return x.id===id;});
+        if (!item) return;
+        var restantes = item.compraId ? state.card.lancamentos.filter(function(x){return x.compraId===item.compraId;}).length : 1;
+        if (!await askConfirm({title: restantes > 1 ? 'Excluir a compra parcelada?' : 'Excluir este lançamento do cartão?', text: restantes > 1 ? 'Serão removidas as ' + restantes + ' parcelas ainda em aberto desta compra.' : 'Esta ação não pode ser desfeita.', action: 'Excluir', danger: true})) return;
+        Engine.deleteCardItem(state, id);
+      } else if (action === 'close-invoice') {
+        r = Engine.closeInvoice(state, id, hoje());
+        if (!r.ok) { await showMessage('Não foi possível fechar', r.erro); return; }
+        commit();
+        if (r.despesa) document.querySelector('nav.tabs button[data-tab="despesas"]').click();
+        else await showMessage('Fatura sem valor a pagar', 'Os créditos cobriram as compras do ciclo. A sobra abate a próxima fatura.', false);
+        return;
+      } else if (action === 'reopen-invoice') {
+        if (!await askConfirm({title: 'Reabrir esta fatura?', text: 'Os lançamentos voltam para o cartão e a despesa da fatura é removida de Despesas.', action: 'Reabrir', danger: true})) return;
+        r = Engine.reopenInvoice(state, id);
+        if (!r.ok) { await showMessage('Não foi possível reabrir', r.erro); return; }
+      } else if (action === 'pay-debt') {
+        var d = Engine.findDebt(state, id);
+        if (!d) return;
+        var pd = await askPayment({title: 'Pagar parcela ' + d.parcelaAtual + '/' + d.parcelas, text: d.descricao + ' · vencimento ' + dateBR(d.vencimento) + '. O pagamento vira uma despesa paga em Despesas.', valor: d.valorParcela, action: 'Pagar parcela'});
+        if (!pd) return;
+        r = Engine.payDebtInstallment(state, id, pd, hoje());
+        if (!r.ok) { await showMessage('Não foi possível pagar', r.erro); return; }
+      } else if (action === 'undo-debt') {
+        var ud = Engine.findDebt(state, id);
+        if (!ud || !ud.pagas.length) return;
+        if (!await askConfirm({title: 'Desfazer o último pagamento?', text: 'A parcela ' + ud.pagas[ud.pagas.length-1].parcela + ' volta a ficar em aberto e a despesa gerada é removida.', action: 'Desfazer', danger: true})) return;
+        r = Engine.undoDebtPayment(state, id);
+        if (!r.ok) { await showMessage('Não foi possível desfazer', r.erro); return; }
+      } else if (action === 'toggle-rec') {
+        var rc = state.recorrencias.find(function(x){return x.id===id;});
+        if (rc) Engine.setRecurrenceActive(state, id, !rc.ativa);
+      } else if (action === 'del-rec') {
+        if (!await askConfirm({title: 'Excluir esta recorrência?', text: 'As ocorrências futuras ainda não pagas serão removidas. O que já passou continua no histórico.', action: 'Excluir', danger: true})) return;
+        Engine.removeRecurrence(state, id, hoje());
+      } else if (action === 'del-debt') {
+        if (!await askConfirm({title: 'Excluir esta dívida?', text: 'As despesas já geradas por parcelas pagas continuam em Despesas.', action: 'Excluir', danger: true})) return;
+        state.debts = state.debts.filter(function(x){return x.id!==id;});
+        state.expenses.forEach(function(x){ if (x.origem && x.origem.tipo === 'divida' && x.origem.id === id) x.origem = null; });
+      }
+      commit();
+    },
+    btnExport_click: async function() {
+      try { await window.exportProtected(state, 'gerenc-fin:backup', 'livro-caixa-'+hoje()+'.secure.json'); }
+      catch (_) { showMessage('Exportação falhou', 'Não foi possível exportar o backup protegido.'); }
+    },
+    btnImport_click: function() { document.getElementById('importFile').click(); },
+    importFile_change: function(e) {
+      var file=e.target.files[0]; if (!file) return;
+      var reader=new FileReader();
+      reader.onload=async function(ev){
+        try {
+          var payload=JSON.parse(ev.target.result), data, oldFormat=false;
+          if (payload && payload.format === 'financ-encrypted-v1') {
+            const password = await window.askSecret('Senha do backup (ou o PIN, em arquivos antigos):', false, true);
+            if (!password) return;
+            data = await FinancVault.unprotect(payload, password, 'gerenc-fin:backup');
+          } else if (payload && payload.encrypted) {
+            var pin=await window.askSecret('Digite a senha do backup antigo:', false, true);
+            if (!pin) return;
+            var cert=certFor(payload.certId);
+            if (payload.certProtected && (!cert || payload.certId !== cert.id)) throw new Error('certificado do dispositivo não corresponde');
+            var key=await deriveKey(pin,fromB64(payload.salt),payload.certProtected ? cert : null);
+            data=await unseal({iv:payload.iv,ciphertext:payload.ciphertext},key);
+            oldFormat=true; // formato anterior ao cofre (150 mil iterações): vale exportar de novo
+          } else {
+            throw new Error('backup não criptografado');
+          }
+          if (!await askConfirm({title: 'Substituir todos os dados?', text: 'Importar este arquivo vai substituir todos os dados atuais.', action: 'Importar', danger: true})) return;
+          normalizeState(data); await commit();
+          document.getElementById('saveStatus').textContent='backup importado e salvo criptografado'+(oldFormat?'. Este backup usa a proteção antiga: exporte um novo para ficar com a proteção atual.':'');
+        } catch(err) { showMessage('Backup inválido', 'Backup inválido, senha incorreta ou arquivo não criptografado.'); }
+      };
+      reader.readAsText(file); e.target.value='';
+    },
+    btnRecover_click: window.lockVault,
+    btnBiometric_click: () => window.vaultSettings(),
+    btnReset_click: async function() {
+      if (await askConfirm({title: 'Apagar todos os lançamentos?', text: 'Isso vai apagar TODOS os dados deste navegador. Tem certeza?', action: 'Apagar tudo', danger: true})) {
+        state=freshState(); save().then(renderAll);
+      }
+    },
+    btnExportCert_click: async function() {
+      try { if (FinancCert.linked) await FinancCert.export(); else { const cert=getDeviceCert(); await window.exportProtected(cert, 'gerenc-fin:certificate', 'gerenc-fin-'+cert.id+'.cert.secure.json'); } }
+      catch (_) { showMessage('Exportação falhou', 'Não foi possível exportar o certificado protegido.'); }
+    },
+    btnImportCert_click: function() { document.getElementById('importCertFile').click(); },
+    importCertFile_change: function(e) {
+      var file=e.target.files[0]; if (!file) return;
+      var reader=new FileReader();
+      reader.onload=async function(ev){
+        try {
+          var cert=await window.importCertificate(JSON.parse(ev.target.result), 'gerenc-fin:certificate');
+          if (!cert || !cert.id || !cert.secret) throw new Error('certificado inválido');
+          if (!await askConfirm({title: 'Importar certificado?', text: FinancCert.linked ? 'Ele passa a ser o certificado de todos os apps; o atual continua guardado para os backups antigos.' : 'Importar este certificado substituirá o certificado deste navegador.', action: 'Importar'})) return;
+          await saveCert(cert);
+          await showMessage('Certificado importado', 'Recarregue o aplicativo antes de abrir o backup.', false);
+        } catch(err) { showMessage('Certificado inválido', 'Arquivo de certificado inválido.'); }
+      };
+      reader.readAsText(file); e.target.value='';
+    },
+    document_visibilitychange: function() {
+      if (document.visibilityState !== 'visible' || document.body.classList.contains('locked')) return;
+      document.getElementById('dataHoje').textContent = new Date().toLocaleDateString('pt-BR', {day:'2-digit', month:'long', year:'numeric'});
+      commit();
     }
-    commit();
-  });
+  };
 
-  // ---------- export / import / reset ----------
-  document.getElementById('btnExport').addEventListener('click', async function(){
-    try { await window.exportProtected(state, 'gerenc-fin:backup', 'livro-caixa-'+hoje()+'.secure.json'); }
-    catch (_) { showMessage('Exportação falhou', 'Não foi possível exportar o backup protegido.'); }
-  });
-
-  document.getElementById('btnImport').addEventListener('click', function(){ document.getElementById('importFile').click(); });
-  document.getElementById('importFile').addEventListener('change', function(e){
-    var file=e.target.files[0]; if (!file) return;
-    var reader=new FileReader();
-    reader.onload=async function(ev){
-      try {
-        var payload=JSON.parse(ev.target.result), data, oldFormat=false;
-        if (payload && payload.format === 'financ-encrypted-v1') {
-          const password = await window.askSecret('Senha do backup (ou o PIN, em arquivos antigos):', false, true);
-          if (!password) return;
-          data = await FinancVault.unprotect(payload, password, 'gerenc-fin:backup');
-        } else if (payload && payload.encrypted) {
-          var pin=await window.askSecret('Digite a senha do backup antigo:', false, true);
-          if (!pin) return;
-          var cert=certFor(payload.certId);
-          if (payload.certProtected && (!cert || payload.certId !== cert.id)) throw new Error('certificado do dispositivo não corresponde');
-          var key=await deriveKey(pin,fromB64(payload.salt),payload.certProtected ? cert : null);
-          data=await unseal({iv:payload.iv,ciphertext:payload.ciphertext},key);
-          oldFormat=true; // formato anterior ao cofre (150 mil iterações): vale exportar de novo
-        } else {
-          throw new Error('backup não criptografado');
-        }
-        if (!await askConfirm({title: 'Substituir todos os dados?', text: 'Importar este arquivo vai substituir todos os dados atuais.', action: 'Importar', danger: true})) return;
-        normalizeState(data); await commit();
-        document.getElementById('saveStatus').textContent='backup importado e salvo criptografado'+(oldFormat?'. Este backup usa a proteção antiga: exporte um novo para ficar com a proteção atual.':'');
-      } catch(err) { showMessage('Backup inválido', 'Backup inválido, senha incorreta ou arquivo não criptografado.'); }
-    };
-    reader.readAsText(file); e.target.value='';
-  });
-
-  document.getElementById('btnRecover').addEventListener('click', window.lockVault);
-  document.getElementById('btnBiometric').addEventListener('click', () => window.vaultSettings());
-
-  document.getElementById('btnReset').addEventListener('click', async function(){
-    if (await askConfirm({title: 'Apagar todos os lançamentos?', text: 'Isso vai apagar TODOS os dados deste navegador. Tem certeza?', action: 'Apagar tudo', danger: true})) {
-      state=freshState(); save().then(renderAll);
-    }
-  });
-
-  document.getElementById('btnExportCert').addEventListener('click', async function(){
-    try { if (FinancCert.linked) await FinancCert.export(); else { const cert=getDeviceCert(); await window.exportProtected(cert, 'gerenc-fin:certificate', 'gerenc-fin-'+cert.id+'.cert.secure.json'); } }
-    catch (_) { showMessage('Exportação falhou', 'Não foi possível exportar o certificado protegido.'); }
-  });
-  document.getElementById('btnImportCert').addEventListener('click', function(){ document.getElementById('importCertFile').click(); });
-  document.getElementById('importCertFile').addEventListener('change', function(e){
-    var file=e.target.files[0]; if (!file) return;
-    var reader=new FileReader();
-    reader.onload=async function(ev){
-      try {
-        var cert=await window.importCertificate(JSON.parse(ev.target.result), 'gerenc-fin:certificate');
-        if (!cert || !cert.id || !cert.secret) throw new Error('certificado inválido');
-        if (!await askConfirm({title: 'Importar certificado?', text: FinancCert.linked ? 'Ele passa a ser o certificado de todos os apps; o atual continua guardado para os backups antigos.' : 'Importar este certificado substituirá o certificado deste navegador.', action: 'Importar'})) return;
-        await saveCert(cert);
-        await showMessage('Certificado importado', 'Recarregue o aplicativo antes de abrir o backup.', false);
-      } catch(err) { showMessage('Certificado inválido', 'Arquivo de certificado inválido.'); }
-    };
-    reader.readAsText(file); e.target.value='';
-  });
+  function bindEvents() {
+    document.getElementById('formDespesa').addEventListener('submit', UiEvents.formDespesa_submit);
+    document.getElementById('formEntrada').addEventListener('submit', UiEvents.formEntrada_submit);
+    document.getElementById('formOrcamento').addEventListener('submit', UiEvents.formOrcamento_submit);
+    document.getElementById('rMes').addEventListener('input', UiEvents.rMes_input);
+    document.getElementById('listOrcamentos').addEventListener('click', UiEvents.listOrcamentos_click);
+    document.getElementById('formConfigCartao').addEventListener('submit', UiEvents.formConfigCartao_submit);
+    document.getElementById('btnConfigCartao').addEventListener('click', UiEvents.btnConfigCartao_click);
+    document.getElementById('btnConfigCancelar').addEventListener('click', UiEvents.btnConfigCancelar_click);
+    document.getElementById('formCartao').addEventListener('submit', UiEvents.formCartao_submit);
+    document.getElementById('formDivida').addEventListener('submit', UiEvents.formDivida_submit);
+    document.querySelector('.wrap').addEventListener('click', UiEvents.wrap_click);
+    document.getElementById('btnExport').addEventListener('click', UiEvents.btnExport_click);
+    document.getElementById('btnImport').addEventListener('click', UiEvents.btnImport_click);
+    document.getElementById('importFile').addEventListener('change', UiEvents.importFile_change);
+    document.getElementById('btnRecover').addEventListener('click', UiEvents.btnRecover_click);
+    document.getElementById('btnBiometric').addEventListener('click', UiEvents.btnBiometric_click);
+    document.getElementById('btnReset').addEventListener('click', UiEvents.btnReset_click);
+    document.getElementById('btnExportCert').addEventListener('click', UiEvents.btnExportCert_click);
+    document.getElementById('btnImportCert').addEventListener('click', UiEvents.btnImportCert_click);
+    document.getElementById('importCertFile').addEventListener('change', UiEvents.importCertFile_change);
+    document.addEventListener('visibilitychange', UiEvents.document_visibilitychange);
+  }
 
   // ---------- init ----------
+  bindEvents();
   document.getElementById('dataHoje').textContent = new Date().toLocaleDateString('pt-BR', {day:'2-digit', month:'long', year:'numeric'});
   ['dVenc','eData','ccData','vVenc','kData'].forEach(function(id){
     var el = document.getElementById(id);
@@ -724,10 +762,4 @@
 
   document.getElementById('rMes').value = Engine.monthKey(hoje());
   try { await load(); if (Engine.materializeRecurrences(state, hoje())) await save(); renderAll(); } catch (error) { document.getElementById('gateStatus').textContent = error.message || 'Falha na migração. Os dados anteriores foram preservados.'; }
-  // M7: se o app ficou aberto de um dia para o outro, recalcula tudo ao voltar para a tela.
-  document.addEventListener('visibilitychange', function(){
-    if (document.visibilityState !== 'visible' || document.body.classList.contains('locked')) return;
-    document.getElementById('dataHoje').textContent = new Date().toLocaleDateString('pt-BR', {day:'2-digit', month:'long', year:'numeric'});
-    commit();
-  });
 })().catch(() => window.lockVault());
