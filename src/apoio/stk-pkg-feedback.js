@@ -5,6 +5,7 @@
  *   Feedback.avaliar(app, nota)            → Promise<void>
  *   Feedback.sugerir(app, {tipo, texto, email}) → Promise<void>
  *   Feedback.media(app)                    → Promise<{media:number, total:number}>
+ *   Feedback.relatarErro(registro)         → Promise<void>  (registro já limpo pelo stk-pkg-erros.js)
  */
 (function () {
   'use strict';
@@ -22,7 +23,7 @@
   const RECAPTCHA_SITE_KEY = '6LehydgtAAAAAOqkwKOQPzg2m0CZwYTRZSXPeyyx';
   const SDK = 'https://www.gstatic.com/firebasejs/10.14.1/';
 
-  const APPS = ['CRIPTO', 'LIVROCAIXA', 'CAMBIO', 'DESPESAS', 'LAUNCHER', 'TAXOMETRO'];
+  const APPS = ['CRIPTO', 'LIVROCAIXA', 'CAMBIO', 'DESPESAS', 'LAUNCHER', 'TAXOMETRO', 'INVEST'];
   const TIPOS = ['sugestao', 'problema', 'elogio'];
 
   // ───────────── BACKEND (Firebase) ─────────────
@@ -66,6 +67,15 @@
     return { media: d.media || 0, total: d.total || 0 };
   }
 
+  // Relatório técnico de erro: só os campos limpos; o horário vem do servidor
+  const CAMPOS_ERRO = ['app', 'versao', 'tipo', 'mensagem', 'origem', 'pilha', 'navegador', 'assinatura'];
+  async function backendRelatarErro(reg) {
+    const { fs, db } = await firebase();
+    const doc = { criadoEm: fs.serverTimestamp() };
+    for (const k of CAMPOS_ERRO) doc[k] = String(reg[k] == null ? '' : reg[k]);
+    await fs.addDoc(fs.collection(db, 'erros'), doc);
+  }
+
   // ───────────── VALIDAÇÃO + LIMITES LOCAIS ─────────────
   const chave = (app, k) => `apoio:${app}:${k}`;
   const ler = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
@@ -104,5 +114,10 @@
     return Number(ler(chave(app, 'nota')) || 0);
   }
 
-  window.Feedback = { avaliar, sugerir, media: backendMedia, minhaNota, TIPOS };
+  async function relatarErro(reg) {
+    if (!reg || !APPS.includes(reg.app)) throw new Error('App não cadastrado.');
+    await backendRelatarErro(reg);
+  }
+
+  window.Feedback = { avaliar, sugerir, media: backendMedia, minhaNota, relatarErro, TIPOS };
 })();
