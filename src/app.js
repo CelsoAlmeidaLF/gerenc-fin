@@ -702,7 +702,8 @@
       }
     },
     btnExportCert_click: async function() {
-      try { if (FinancCert.linked) await FinancCert.export(); else { const cert=getDeviceCert(); await window.exportProtected(cert, 'gerenc-fin:certificate', 'gerenc-fin-'+cert.id+'.cert.secure.json'); } }
+      // Só o PIN, nunca senha: o arquivo sai protegido pelas 12 palavras.
+      try { if (await FinancCert.export()) await showMessage('Certificado baixado', 'Protegido pelas suas 12 palavras.', false); }
       catch (err) { showMessage('Exportação falhou', (err && err.message) || 'Não foi possível exportar o certificado protegido.'); }
     },
     btnImportCert_click: function() { document.getElementById('importCertFile').click(); },
