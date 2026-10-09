@@ -40,6 +40,31 @@
     el.setAttribute('data-form-type', 'other');
     return el;
   }
+  // PIN só digitado: sem colar, arrastar nem preenchimento automático (Proton Pass, Google). Só entra o que vem do
+  // teclado (no PIN, um número por vez); o que aparece sem digitação é desfeito. input._typed guarda o último valor
+  // digitado: na confirmação, valor diferente dele foi posto por fora e é recusado.
+  function typedOnly(input, digits) {
+    noAutofill(input);
+    // Campo de senha chama o "salvar senha" do Google e o Proton Pass: o PIN vira texto mascarado.
+    if (digits && input.type === 'password') { input.type = 'text'; input.classList.add('vault-masked'); }
+    let typing = false;
+    input._typed = '';
+    for (const name of ['paste', 'drop', 'dragover', 'copy', 'cut']) input.addEventListener(name, event => event.preventDefault());
+    input.addEventListener('beforeinput', event => {
+      const kind = event.inputType || '', text = event.data || '';
+      const ok = kind.startsWith('delete') || (kind === 'insertText' && (!digits || text.length <= 1)) || (!digits && kind === 'insertCompositionText');
+      if (!ok) { event.preventDefault(); return; }
+      typing = true;
+    }, true);
+    input.addEventListener('input', event => {
+      if (event.isTrusted && typing) { typing = false; input._typed = input.value; return; }
+      typing = false;
+      event.stopImmediatePropagation();
+      input.value = input._typed;
+    }, true);
+    return input;
+  }
+  const wasTyped = input => input.value === input._typed;
   const panel = document.createElement('section'); panel.id = 'vaultGate';
   panel.setAttribute('aria-labelledby', 'vaultTitle');
   panel.innerHTML = '<div class="vault-brand"><img class="vault-logo" alt="" width="40" height="40" hidden><div><div class="vault-app-name"></div><div class="vault-eyebrow">' + icon('shield-check', 12) + 'SEGURANÇA LOCAL</div></div></div>'
@@ -48,7 +73,7 @@
     + '<form id="vaultForm" novalidate' + NO_AUTOFILL + '>'
     + '<label id="vaultPasswordLabel" class="vault-field" hidden>Senha<input id="vaultPassword" type="password"' + NO_AUTOFILL + ' autocapitalize="none" spellcheck="false" maxlength="256"></label>'
     + '<label id="vaultRecoveryLabel" class="vault-field" hidden>12 palavras ou código de 12 caracteres<textarea id="vaultRecovery"' + NO_AUTOFILL + ' autocapitalize="none" autocorrect="off" spellcheck="false" rows="3" placeholder="abacate abaixo … ou XXXX-XXXX-XXXX"></textarea></label>'
-    + '<div class="vault-pin-wrap" id="vaultPinWrap"><input id="vaultPin" name="vault-pin" class="vault-pin-input"' + NO_AUTOFILL + ' type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" aria-label="PIN de 6 números" aria-describedby="vaultHelp vaultMessage">'
+    + '<div class="vault-pin-wrap" id="vaultPinWrap"><input id="vaultPin" name="vault-pin" class="vault-pin-input"' + NO_AUTOFILL + ' type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6" aria-label="PIN de 6 números" aria-describedby="vaultHelp vaultMessage">'
     + '<div class="vault-dots" id="vaultDots" aria-hidden="true">' + '<span></span>'.repeat(6) + '</div></div>'
     + '<div class="vault-keypad" id="vaultKeypad">' + keys.map(k => k === 'bio'
       ? '<button type="button" tabindex="-1" data-key="bio" class="vault-key-bio is-off" aria-label="Desbloquear com biometria" title="Desbloquear com biometria">' + icon('fingerprint', 26) + '</button>'
@@ -177,7 +202,8 @@
     } catch (_) { vault.forget(); return false; }
   }
 
-  const pinInput = get('vaultPin');
+  const pinInput = typedOnly(get('vaultPin'), true);
+  typedOnly(get('vaultPassword'), false);
   const COPY = {
     'unlock': ['Dados protegidos', 'Digite seu PIN de 6 números para abrir o aplicativo.', 'Desbloquear', 'lock'],
     'join': ['Use seu PIN', 'Você já tem um PIN neste aparelho. Digite-o para abrir o ' + appName + '.', 'Entrar', 'shield'],
@@ -232,6 +258,7 @@
   if (matchMedia('(pointer: coarse)').matches) pinInput.inputMode = 'none';
   pinInput.oninput = () => {
     pinInput.value = pinInput.value.replace(/\D/g, '').slice(0, 6);
+    pinInput._typed = pinInput.value; // digitado no teclado da tela ou no teclado físico (o resto é barrado em typedOnly)
     if (pinInput.value) get('vaultDots').classList.remove('vault-shake');
     renderDots();
     if (pinInput.value.length === 6 && !busy) get('vaultForm').requestSubmit();
@@ -426,6 +453,7 @@
     if (busy || blocked) return;
     get('vaultMessage').textContent = '';
     const pin = passwordMode() ? get('vaultPassword').value : pinInput.value;
+    if (PIN_STEPS.has(step) && !wasTyped(passwordMode() ? get('vaultPassword') : pinInput)) { fail(passwordMode() ? 'Digite a senha.' : 'Digite o PIN no teclado.'); return; }
     if (step === 'recover-code') {
       recoveryInput = get('vaultRecovery').value.trim();
       try { await FinancVault.seed.parseSecret(recoveryInput); }
@@ -495,7 +523,7 @@
     let label = text ? 'Os outros apps usam uma senha. Digite essa senha para usar a mesma em todos (Cancelar mantém o PIN deste app):'
       : 'Os outros apps usam outro PIN. Digite esse PIN para usar um só em todos (Cancelar mantém o PIN deste app):';
     for (let tries = 0; tries < 5; tries++) {
-      const pin = await window.askSecret(label, false, text);
+      const pin = await window.askSecret(label, false, text, false, true);
       if (!pin) return null;
       try { return { pin, status: await vault.linkWithIdentityPin(pin) }; }
       catch (error) { if (error.name !== 'OperationError') throw error; label = text ? 'Senha incorreta. Tente de novo:' : 'PIN incorreto. Tente de novo:'; }
@@ -540,7 +568,8 @@
   window.addEventListener('storage', event => { if (event.key === vault.storageKey && vault.key) window.lockVault(); });
   // PINs are collected in a masked, numeric field. Legacy secrets remain readable during migration.
   // strong: senha longa para arquivos exportados (texto livre, mínimo de caracteres, com confirmação).
-  window.askSecret = (label, create = false, legacy = false, strong = false) => new Promise(resolve => {
+  // typed: segredo de abrir os apps (PIN ou a senha que o substitui) — só digitado. Senhas de arquivos antigos podem ser coladas.
+  window.askSecret = (label, create = false, legacy = false, strong = false, typed = false) => new Promise(resolve => {
     if (strong) { create = true; legacy = true; }
     const dialog = document.createElement('dialog'); dialog.className = 'vault-dialog';
     const form = noAutofill(document.createElement('form')); form.method = 'dialog';
@@ -550,12 +579,14 @@
     const confirm = noAutofill(document.createElement('input')); confirm.type = 'password'; confirm.placeholder = strong ? 'Repita a senha' : 'Repita o PIN';
     if (strong) { input.placeholder = 'Mínimo de ' + FinancVault.PASSPHRASE_MIN + ' caracteres'; input.minLength = FinancVault.PASSPHRASE_MIN; } confirm.required = create; confirm.hidden = !create; confirm.setAttribute('aria-label', 'Repita o PIN');
     if (!legacy) for (const field of [input, confirm]) { field.className = 'vault-pin'; field.inputMode = 'numeric'; field.pattern = '[0-9]{6}'; field.minLength = 6; field.maxLength = 6; field.placeholder = '••••••'; }
+    const typedField = !legacy || typed;
+    if (typedField) for (const field of [input, confirm]) typedOnly(field, !legacy);
     const actions = document.createElement('div'); actions.className = 'vault-dialog-actions';
     const cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = 'Cancelar'; cancel.onclick = () => dialog.close();
     const submit = document.createElement('button'); submit.textContent = 'Confirmar';
     actions.append(cancel, submit);
     let result = null;
-    form.onsubmit = event => { if (strong && !FinancVault.passphraseOK(input.value)) { event.preventDefault(); input.setCustomValidity('Use pelo menos ' + FinancVault.PASSPHRASE_MIN + ' caracteres. Uma frase fácil de lembrar funciona bem.'); input.reportValidity(); return; } if (!legacy && !FinancVault.pinOK(input.value)) { event.preventDefault(); input.setCustomValidity('Digite exatamente 6 números.'); input.reportValidity(); return; } if (create && input.value !== confirm.value) { event.preventDefault(); confirm.setCustomValidity('Os PINs não coincidem.'); confirm.reportValidity(); return; } result = input.value; };
+    form.onsubmit = event => { if (typedField && (!wasTyped(input) || (create && !wasTyped(confirm)))) { event.preventDefault(); const bad = wasTyped(input) ? confirm : input; bad.value = ''; bad._typed = ''; bad.setCustomValidity(legacy ? 'Digite a senha.' : 'Digite o PIN.'); bad.reportValidity(); return; } if (strong && !FinancVault.passphraseOK(input.value)) { event.preventDefault(); input.setCustomValidity('Use pelo menos ' + FinancVault.PASSPHRASE_MIN + ' caracteres. Uma frase fácil de lembrar funciona bem.'); input.reportValidity(); return; } if (!legacy && !FinancVault.pinOK(input.value)) { event.preventDefault(); input.setCustomValidity('Digite exatamente 6 números.'); input.reportValidity(); return; } if (create && input.value !== confirm.value) { event.preventDefault(); confirm.setCustomValidity('Os PINs não coincidem.'); confirm.reportValidity(); return; } result = input.value; };
     input.oninput = () => input.setCustomValidity('');
     confirm.oninput = () => confirm.setCustomValidity('');
     dialog.onclose = () => { input.value = ''; confirm.value = ''; dialog.remove(); resolve(result); };
@@ -641,7 +672,7 @@
     const wait = pinBlockedUntil - Date.now();
     if (wait > 0) throw new Error('Muitas tentativas. Aguarde ' + Math.ceil(wait / 1000) + 's.');
     const text = vault.secretKind === 'password';
-    const pin = await window.askSecret(text ? label.replace(/\bseu PIN\b/, 'sua senha').replace(/\bo PIN\b/, 'a senha') : label, false, text);
+    const pin = await window.askSecret(text ? label.replace(/\bseu PIN\b/, 'sua senha').replace(/\bo PIN\b/, 'a senha') : label, false, text, false, true);
     if (!pin) return null;
     try { const result = await action(pin); pinFailures = 0; return result ?? true; }
     catch (error) {
@@ -762,7 +793,7 @@
         const text = vault.secretKind === 'password';
         const changed = await withPin('Digite o PIN atual:', async current => {
           await vault.verifyPin(current);
-          const next = text ? await window.askSecret('Crie a nova senha (mínimo de ' + FinancVault.PASSPHRASE_MIN + ' caracteres; pode ser uma frase):', true, true, true)
+          const next = text ? await window.askSecret('Crie a nova senha (mínimo de ' + FinancVault.PASSPHRASE_MIN + ' caracteres; pode ser uma frase):', true, true, true, true)
             : await window.askSecret('Crie o novo PIN de 6 números:', true);
           if (!next) return false;
           if (next === current) throw new Error(text ? 'A nova senha precisa ser diferente da atual.' : 'O novo PIN precisa ser diferente do atual.');
@@ -774,7 +805,7 @@
         const changed = await withPin('Digite o PIN atual:', async current => {
           await vault.verifyPin(current);
           const next = toPin ? await window.askSecret('Crie o PIN de 6 números:', true)
-            : await window.askSecret('Crie a senha (mínimo de ' + FinancVault.PASSPHRASE_MIN + ' caracteres; pode ser uma frase fácil de lembrar):', true, true, true);
+            : await window.askSecret('Crie a senha (mínimo de ' + FinancVault.PASSPHRASE_MIN + ' caracteres; pode ser uma frase fácil de lembrar):', true, true, true, true);
           if (!next) return false;
           await vault.changeSecretKind(current, next, toPin ? 'pin' : 'password'); return true;
         });
