@@ -495,6 +495,8 @@
         if (!envelope.identity) throw new Error('Sessão inválida.');
         await this.useMaster(saved.m);
         await this.openWith(saved.k, envelope, stored, saved.m);
+        // Reaberto sem PIN: a migração para as 12 palavras fica para finishMigration (depois de a sessão ser aceita).
+        if (!this.identity.hasSeed) this.pendingMaster = saved.m;
       } else if (typeof saved === 'string' && !envelope.identity) await this.openWith(saved, envelope, stored);
       else throw new Error('Sessão inválida.');
     }
@@ -535,10 +537,17 @@
       return this.root;
     }
     get hasSeed() { return Boolean(this.masterKey && this.identity.hasSeed); }
-    // Mostra as palavras de novo (pede o PIN).
+    // Sessão reaberta sem PIN num FINANC ID ainda sem palavras: cria agora. Devolve { seed } ou {}.
+    async finishMigration() {
+      const master = this.pendingMaster; this.pendingMaster = null;
+      return master && this.key ? this.ensureSeed(master) : {};
+    }
+    // Mostra as palavras de novo (pede o PIN). Sem palavras ainda (FINANC ID antigo), cria agora.
     async revealSeed(pin) {
       this.assertOpen();
-      const raw = unb64(await this.masterFromPin(pin));
+      const master = await this.masterFromPin(pin);
+      if (!this.identity.hasSeed) return (await this.ensureSeed(master)).seed;
+      const raw = unb64(master);
       let key; try { key = await importAes(raw); } finally { raw.fill(0); }
       const entropy = await this.identity.seed(key);
       if (!entropy) throw new Error('Este aparelho ainda não tem as 12 palavras.');
@@ -597,7 +606,7 @@
       const keys = Array.from({ length: this.storage.length }, (_, i) => this.storage.key(i));
       for (const key of keys) if (matches(key) && this.storage.getItem(key) === this.getItem(key)) this.storage.removeItem(key);
     }
-    forget() { this.key = null; this.values = null; this.envelope = null; this.prefs = null; this.session = null; this.closing = false; this.masterKey = null; this.certs = null; this.rawForLink = null; if (this.root) this.root.fill(0); this.root = null; }
+    forget() { this.key = null; this.values = null; this.envelope = null; this.prefs = null; this.session = null; this.closing = false; this.masterKey = null; this.certs = null; this.rawForLink = null; if (this.root) this.root.fill(0); this.root = null; this.pendingMaster = null; }
     async lock() { this.closing = true; try { await this.flush(); this.forget(); } catch (error) { this.closing = false; throw error; } }
   }
 
