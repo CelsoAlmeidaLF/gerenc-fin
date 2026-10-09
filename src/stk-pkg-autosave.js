@@ -280,104 +280,73 @@
     };
   }
 
-  /* Indicador discreto + painel (estilo Aero: vidro translúcido, gradiente suave). */
-  const STATUS = {
-    off: ['Salvar no celular', 'Ainda não está salvando em arquivo. Escolha uma pasta para não perder os dados se o navegador for limpo.'],
-    reconnect: ['Toque para continuar salvando', 'O navegador pediu para confirmar o acesso à pasta.'],
-    pending: ['Alterações a salvar', 'Há alterações que ainda não foram para o arquivo.'],
-    saving: ['Salvando…', 'Gravando o arquivo na pasta.'],
-    saved: ['Salvo no celular', 'Tudo salvo no arquivo da pasta.'],
-    error: ['Erro ao salvar', ''],
-    conflict: ['Arquivo diferente na pasta', 'O arquivo da pasta é mais novo que os dados deste aparelho. Escolha qual manter.'],
-    unsupported: ['Salvar no celular', 'Este navegador não grava direto em pastas. Use "Baixar cópia" de vez em quando; o arquivo abre com o mesmo PIN.'],
+  /* Configurações → grupo "Salvar no celular", com os mesmos componentes da tela (fs-row, fs-switch, badge). */
+  const BADGE = {
+    off: null, reconnect: ['Pausado', 'warn'], pending: ['Pendente', 'info'], saving: ['Salvando', 'info'],
+    saved: ['Salvo', 'pos'], error: ['Erro', 'neg'], conflict: ['Conferir', 'warn'], unsupported: null,
   };
-  let saver = null, chip = null, chipTimer = null, panel = null;
+  let saver = null, askedThisSession = false;
   const state = () => supported ? saver.status : 'unsupported';
-  function describe() {
-    const s = state(), [label, text] = STATUS[s];
-    return { label, text: s === 'error' ? saver.error : text };
-  }
-  function renderChip() {
-    if (!chip) return;
-    const s = state(), { label } = describe();
-    chip.dataset.state = s; chip.hidden = s === 'unsupported';
-    chip.querySelector('.fa-chip-text').textContent = s === 'saved' && saver.lastSaved ? label + ' · ' + when(saver.lastSaved).split(' ')[1] : label;
-    chip.setAttribute('aria-label', label + '. Abrir salvamento automático');
-    // Salvo: mostra por instantes e recolhe para só o ponto verde.
-    clearTimeout(chipTimer); chip.classList.remove('fa-mini');
-    if (s === 'saved') chipTimer = setTimeout(() => chip.classList.add('fa-mini'), 2500);
-    if (panel) renderPanel();
-  }
-  function mountChip() {
-    chip = document.createElement('button'); chip.type = 'button'; chip.id = 'faChip'; chip.className = 'fa-chip';
-    chip.innerHTML = '<span class="fa-dot" aria-hidden="true"></span><span class="fa-chip-text"></span>';
-    chip.onclick = async () => {
-      if (saver.status === 'reconnect' && saver.dir) { await reconnect(); return; }
-      openPanel();
-    };
-    document.body.append(chip); renderChip();
+  function statusText() {
+    const s = state(), folder = saver.folder ? 'pasta ' + saver.folder : 'pasta escolhida';
+    if (s === 'unsupported') return 'Este navegador não grava em pastas. Use "Baixar cópia" de vez em quando.';
+    if (s === 'off') return 'Grava sozinho um arquivo no celular. Se o navegador for limpo, os dados voltam com o mesmo PIN.';
+    if (s === 'reconnect') return 'O navegador pediu para confirmar o acesso à ' + folder + '.';
+    if (s === 'error') return saver.error;
+    if (s === 'conflict') return 'O arquivo da ' + folder + ' é mais novo que os dados deste aparelho. Escolha qual manter.';
+    if (s === 'saved') return 'Salvo' + (saver.lastSaved ? ' em ' + when(saver.lastSaved) : '') + ' · ' + folder + '.';
+    return 'Salvando na ' + folder + '…';
   }
   async function reconnect() {
-    try { if (await permitted(saver.dir, true)) { persist(); await saver.connect(saver.dir); } }
-    catch (error) { saver.set('error', errorText(error)); }
+    if (await permitted(saver.dir, true)) { persist(); await saver.connect(saver.dir); return ''; }
+    return 'Sem permissão, o arquivo não é atualizado.';
   }
-  function openPanel() {
-    if (panel) return;
-    panel = document.createElement('dialog'); panel.className = 'vault-dialog fa-panel'; panel.setAttribute('aria-labelledby', 'faTitle');
-    panel.onclose = () => { panel.remove(); panel = null; };
-    panel.onclick = event => { if (event.target === panel) panel.close(); else handlePanel(event); };
-    document.body.append(panel); renderPanel(); panel.showModal();
-  }
-  function renderPanel() {
-    const s = state(), { label, text } = describe();
-    const btn = (id, ic, txt, cls = '') => '<button type="button" data-fa="' + id + '" class="' + cls + '">' + icon(ic, 16) + '<span>' + esc(txt) + '</span></button>';
-    let actions = '';
-    if (s === 'conflict') actions = btn('use-file', 'download', 'Usar o arquivo', 'fa-primary') + btn('keep', 'check', 'Manter este aparelho');
-    else if (s === 'unsupported') actions = btn('download', 'download', 'Baixar cópia agora', 'fa-primary');
-    else if (s === 'off') actions = btn('pick', 'database', 'Escolher pasta', 'fa-primary');
-    else if (s === 'reconnect') actions = btn('reconnect', 'refresh', 'Continuar salvando', 'fa-primary');
-    else actions = btn('save', 'check', 'Salvar agora', 'fa-primary');
-    const secondary = (s !== 'unsupported' && s !== 'off' ? btn('pick', 'database', 'Trocar pasta') : '')
-      + btn('restore', 'upload', 'Restaurar de um arquivo') + (s !== 'unsupported' ? btn('download', 'download', 'Baixar cópia') : '')
-      + (saver.dir ? btn('stop', 'x', 'Parar de salvar na pasta', 'fa-quiet') : '');
-    panel.innerHTML = '<div class="fa-head"><span class="fa-orb" data-state="' + s + '">' + icon('database', 20) + '</span><div><p id="faTitle"><b>Salvamento automático</b></p><p class="fa-status"><span class="fa-dot" data-state="' + s + '"></span>' + esc(label) + '</p></div>'
-      + '<button type="button" class="fa-close" data-fa="close" aria-label="Fechar">' + icon('x', 18) + '</button></div>'
-      + '<p class="vault-dim">' + esc(text) + '</p>'
-      + (saver.dir ? '<dl class="fa-facts"><dt>Pasta</dt><dd>' + esc(saver.folder || '—') + '</dd><dt>Arquivo</dt><dd>' + esc(mainName(appId)) + '</dd><dt>Última gravação</dt><dd>' + esc(when(saver.lastSaved) || '—') + '</dd></dl>' : '')
-      + '<div class="fa-actions">' + actions + '</div><div class="fa-more">' + secondary + '</div>'
-      + '<p class="fa-note">' + icon('shield-check', 14) + '<span>O arquivo guarda o cofre já criptografado e abre com o mesmo PIN: não precisa de senha extra. Cada app grava o próprio arquivo na mesma pasta.</span></p>'
-      + '<p class="fa-msg" role="status" aria-live="polite"></p>';
-  }
-  async function handlePanel(event) {
-    const el = event.target.closest('[data-fa]');
-    if (!el || el.disabled) return;
-    const kind = el.dataset.fa;
-    const say = (text, bad) => { const m = panel && panel.querySelector('.fa-msg'); if (m) { m.textContent = text; m.classList.toggle('fa-bad', Boolean(bad)); } };
-    if (kind === 'close') { panel.close(); return; }
-    el.disabled = true;
-    try {
-      if (kind === 'pick') { const dir = await pickDir(); await saver.connect(dir); }
-      else if (kind === 'reconnect') await reconnect();
-      else if (kind === 'save') { await vault.flush(); await saver.flush(); }
-      else if (kind === 'keep') await saver.keepLocal();
-      else if (kind === 'use-file') await replaceWith(saver.conflict, say);
-      else if (kind === 'download') {
+  // Erro de seletor cancelado não é erro: só não faz nada.
+  const quiet = run => async () => { try { return await run(); } catch (error) { if (error && error.name === 'AbortError') return ''; throw Object.assign(new Error(errorText(error)), { name: 'AutosaveError' }); } };
+  function rows() {
+    if (!saver) return [];
+    const s = state(), on = Boolean(saver.dir);
+    const list = [{ id: 'main', icon: 'database', label: 'Salvar no celular', description: statusText(), badge: BADGE[s] && { text: BADGE[s][0], tone: BADGE[s][1] },
+      toggle: on, disabled: !supported, onClick: quiet(async () => {
+        if (on) { await forgetDir(); saver.disconnect(); return 'Parou de salvar na pasta. O arquivo que já existe continua lá.'; }
+        await saver.connect(await pickDir()); return saver.status === 'saved' ? 'Pronto: salvando sozinho na pasta.' : '';
+      }) }];
+    if (s === 'reconnect') list.push({ id: 'reconnect', icon: 'refresh', label: 'Continuar salvando', description: 'Libera o acesso à pasta de novo.', accent: true, onClick: quiet(reconnect) });
+    if (s === 'conflict') list.push(
+      { id: 'use-file', icon: 'download', label: 'Usar o arquivo da pasta', description: 'Arquivo de ' + when(saver.conflict.savedAt) + '. Os dados atuais vão para o .bak.', accent: true, onClick: quiet(() => replaceWith(saver.conflict)) },
+      { id: 'keep', icon: 'check', label: 'Manter os dados deste aparelho', description: 'O arquivo da pasta vai para o .bak.', onClick: quiet(async () => { await saver.keepLocal(); return 'Mantidos os dados deste aparelho.'; }) });
+    if (on && s !== 'conflict' && s !== 'reconnect') list.push(
+      { id: 'save', icon: 'check', label: 'Salvar agora', description: mainName(appId), onClick: quiet(async () => { await vault.flush(); await saver.flush(); return saver.status === 'saved' ? 'Salvo.' : ''; }) },
+      { id: 'pick', icon: 'database', label: 'Trocar pasta', description: 'A mesma pasta vale para todos os apps.', onClick: quiet(async () => { await saver.connect(await pickDir()); return ''; }) });
+    list.push(
+      { id: 'restore', icon: 'upload', label: 'Restaurar de um arquivo', description: 'Escolha um arquivo .financ.json; abre com o mesmo PIN.', onClick: quiet(async () => {
+        const [picked] = await pickFiles(false);
+        if (!picked) return '';
+        if (picked.error) throw picked.error;
+        if (picked.appId !== appId) throw new Error('Este arquivo é de outro app (' + picked.appId + ').');
+        return replaceWith(picked);
+      }) },
+      { id: 'download', icon: 'download', label: 'Baixar cópia', description: 'Mesmo arquivo, protegido pelo mesmo PIN. Sem senha extra.', onClick: quiet(async () => {
         await vault.flush();
         const snap = await snapshot(storage, appId, html.dataset.vaultVersion || '');
         if (!snap) throw new Error('Ainda não há dados para salvar.');
-        download(serialize(snap), mainName(appId));
-        say('Cópia baixada. Guarde o arquivo; ele abre com o mesmo PIN.');
-        return;
-      } else if (kind === 'restore') {
-        const [picked] = await pickFiles(false);
-        if (!picked) return;
-        if (picked.error) throw picked.error;
-        if (picked.appId !== appId) throw new Error('Este arquivo é de outro app (' + picked.appId + ').');
-        await replaceWith(picked, say);
-      } else if (kind === 'stop') { await forgetDir(); saver.disconnect(); }
-    } catch (error) { if (!error || error.name !== 'AbortError') { say(errorText(error), true); return; } }
-    finally { if (el.isConnected) el.disabled = false; }
+        download(serialize(snap), mainName(appId)); return 'Cópia baixada.';
+      }) });
+    return list;
   }
+  // Erros que precisam de atenção usam o aviso de gravação que o kit já mostra no topo.
+  const banner = () => document.getElementById('vaultSaveError');
+  let bannerText = '';
+  function onStatus() {
+    const el = banner();
+    if (el) {
+      const next = saver.status === 'error' ? 'Não foi possível salvar no celular: ' + saver.error + ' Veja em Configurações.' : '';
+      if (next) el.textContent = next; else if (el.textContent === bannerText) el.textContent = '';
+      bannerText = next;
+    }
+    if (root.FinancSettings && root.FinancSettings.refresh) root.FinancSettings.refresh();
+  }
+
   function confirmBox(title, text, action) {
     return new Promise(resolve => {
       const dialog = document.createElement('dialog'); dialog.className = 'vault-dialog';
@@ -392,11 +361,11 @@
     });
   }
   // Troca os dados deste app pelos do arquivo. Antes, os dados atuais vão para o .bak da pasta (quando conectada).
-  async function replaceWith(mirror, say) {
+  async function replaceWith(mirror) {
     const localUid = uidOf(storage.getItem(ID_KEY));
     if (linkedVault(mirror.vault) && localUid && uidOf(mirror.identity) !== localUid) throw new Error('Este arquivo usa o PIN de outra instalação e não abre aqui.');
     if (!await confirmBox('Substituir os dados?', 'Os dados deste app passam a ser os do arquivo de ' + when(mirror.savedAt) + '.'
-      + (saver.dir ? ' Os dados atuais ficam guardados no arquivo .bak da pasta.' : ' Baixe uma cópia antes, se quiser guardar os atuais.'), 'Substituir')) return;
+      + (saver.dir ? ' Os dados atuais ficam guardados no arquivo .bak da pasta.' : ' Baixe uma cópia antes, se quiser guardar os atuais.'), 'Substituir')) return '';
     await vault.flush();
     if (saver.dir && await permitted(saver.dir, false)) {
       const current = await snapshot(storage, appId, html.dataset.vaultVersion || '');
@@ -407,24 +376,19 @@
     storage.setItem(VAULT_PREFIX + appId, mirror.vault);
     if (!storage.getItem(ID_KEY) && mirror.identity) storage.setItem(ID_KEY, mirror.identity);
     writeMeta(storage, appId, mirror);
-    say('Dados restaurados. Reabrindo…');
     setTimeout(() => location.reload(), 300);
+    return 'Dados restaurados. Reabrindo…';
   }
 
   function addSettings() {
-    if (!root.FinancSettings) return;
-    root.FinancSettings.addSection({ title: 'Salvamento automático', rows: [{
-      icon: 'database', label: 'Salvar no celular',
-      get description() { return saver ? describe().label + (saver.folder ? ' · pasta ' + saver.folder : '') : 'Abra o app para configurar.'; },
-      onClick: () => { if (saver) openPanel(); },
-    }] });
+    if (root.FinancSettings && root.FinancSettings.addGroup) root.FinancSettings.addGroup({ title: 'Salvar no celular', rows });
   }
 
   async function start() {
     saver = new AutoSave({
       storage, appId, appVersion: html.dataset.vaultVersion || '',
       beforeWrite: async () => { if (vault.pending) await vault.pending.catch(() => {}); },
-      onStatus: renderChip,
+      onStatus,
     });
     // FINANC ID de versões anteriores ganha o identificador fixo antes da primeira gravação.
     try { if (vault.identity.exists && typeof vault.identity.read().uid !== 'string') vault.identity.write(() => {}); } catch (_) {}
@@ -433,13 +397,19 @@
     // Ao sair do app (trocar de app, apagar a tela), grava já, sem esperar o intervalo. Não depende de beforeunload.
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && saver.dir) saver.flush(); });
     addEventListener('pagehide', () => { if (saver.dir) saver.flush(); });
-    mountChip();
     if (!supported) return;
     const dir = await loadDir();
     if (!dir) { saver.set('off'); return; }
     saver.dir = dir;
     try { if (await permitted(dir, false)) { persist(); await saver.connect(dir); } else saver.set('reconnect'); }
     catch (error) { saver.set('error', errorText(error)); }
+    // Permissão expirada (comum no Android ao reabrir): pede de novo no primeiro toque no app, uma vez por sessão.
+    if (saver.status === 'reconnect') addEventListener('pointerup', async function again(event) {
+      if (askedThisSession || saver.status !== 'reconnect') { removeEventListener('pointerup', again, true); return; }
+      if (event.target.closest && event.target.closest('dialog')) return;
+      askedThisSession = true; removeEventListener('pointerup', again, true);
+      try { await reconnect(); } catch (_) {}
+    }, true);
   }
 
   mountGateRestore();
