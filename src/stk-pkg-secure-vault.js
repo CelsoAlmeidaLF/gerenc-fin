@@ -75,7 +75,7 @@
   const certOK = c => c && typeof c.id === 'string' && /^[A-Za-z0-9_-]{1,80}$/.test(c.id) && typeof c.secret === 'string' && (() => { try { return atob(c.secret).length === 32; } catch (_) { return false; } })();
   const cleanCert = c => ({ version: 1, id: c.id, secret: c.secret, createdAt: c.createdAt || new Date().toISOString() });
   class Identity {
-    constructor(storage) { this.storage = storage; }
+    constructor(storage) { this.storage = storage; this.onWrite = () => {}; }
     get exists() { return this.storage.getItem(ID_KEY) !== null; }
     read() {
       const record = JSON.parse(this.storage.getItem(ID_KEY));
@@ -86,9 +86,12 @@
     write(change) {
       const record = this.exists ? this.read() : { version: 1 };
       change(record);
+      // Identificador fixo (não secreto): permite saber se um backup em arquivo é deste mesmo FINANC ID.
+      if (typeof record.uid !== 'string') record.uid = b64(random(16));
       const next = JSON.stringify(record);
       this.storage.setItem(ID_KEY, next);
       if (this.storage.getItem(ID_KEY) !== next) throw new Error('Falha ao gravar o FINANC ID.');
+      try { this.onWrite(); } catch (_) {}
       return record;
     }
     async create(pin, recovery) {
@@ -142,7 +145,7 @@
       this.storage = storage; this.appId = appId; this.storageKey = 'financ-vault-v1:' + appId;
       this.onError = onError; this.key = null; this.values = null; this.envelope = null;
       this.pending = null; this.dirty = false; this.lastStored = null; this.closing = false; this.prefs = null;
-      this.sessionKey = null; this.session = null;
+      this.sessionKey = null; this.session = null; this.onStored = () => {};
       this.identity = new Identity(storage); this.masterKey = null; this.certs = null;
     }
     get exists() { return this.storage.getItem(this.storageKey) !== null; }
@@ -408,6 +411,7 @@
             this.storage.setItem(this.storageKey, next);
             if (this.storage.getItem(this.storageKey) !== next) throw new Error('Falha ao confirmar a gravação.');
             this.lastStored = next; this.envelope.payload = payload;
+            try { this.onStored(); } catch (_) {}
           } catch (error) { this.dirty = true; throw error; }
         }
       })();
