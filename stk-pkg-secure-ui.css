@@ -193,49 +193,10 @@ html.vault-locked body { min-height:100vh; min-height:100dvh; display:grid; plac
 .pw-wrap > button.pw-toggle:focus-visible { outline:2px solid var(--accent, #6fcf97); outline-offset:-2px; }
 
 
-/* Salvamento automático em arquivo (stk-pkg-autosave.js): indicador discreto e painel em vidro (Aero). */
-.fa-chip { --fa-ok:#3fbf7f; --fa-warn:#e0b04a; --fa-bad:var(--down, #e08585); --fa-idle:var(--accent, #6fcf97);
-  position:fixed; z-index:40; left:max(12px, env(safe-area-inset-left)); bottom:calc(12px + env(safe-area-inset-bottom)); display:inline-flex; align-items:center; gap:8px; max-width:calc(100vw - 24px); min-height:34px; padding:6px 14px 6px 10px; border-radius:999px; cursor:pointer;
-  color:var(--ink, #eaf0ec); font:600 12px/1.2 'IBM Plex Mono', monospace; border:1px solid color-mix(in srgb, #fff 35%, transparent);
-  background:linear-gradient(180deg, color-mix(in srgb, #fff 28%, transparent) 0%, color-mix(in srgb, #fff 6%, transparent) 50%, transparent 51%), color-mix(in srgb, var(--surface, #171d1a) 72%, transparent);
-  box-shadow:0 6px 20px rgba(0,0,0,.22), inset 0 1px 0 color-mix(in srgb, #fff 45%, transparent); backdrop-filter:blur(12px) saturate(1.4); -webkit-backdrop-filter:blur(12px) saturate(1.4);
-  transition:max-width .35s ease, padding .35s ease, opacity .2s; overflow:hidden; white-space:nowrap; }
-.fa-chip[hidden] { display:none; }
-.fa-chip-text { overflow:hidden; text-overflow:ellipsis; }
-.fa-chip.fa-mini { max-width:34px; padding:6px 10px; opacity:.85; }
-.fa-chip.fa-mini .fa-chip-text { opacity:0; }
-.fa-chip:focus-visible { outline:2px solid var(--accent, #6fcf97); outline-offset:2px; }
-.fa-dot { flex-shrink:0; width:12px; height:12px; border-radius:50%; background:radial-gradient(circle at 35% 30%, #fff 0 18%, transparent 45%), var(--fa-dot, #3fbf7f); box-shadow:0 0 8px var(--fa-dot, #3fbf7f); }
-[data-state=saved] .fa-dot, .fa-dot[data-state=saved] { --fa-dot:#3fbf7f; }
-[data-state=saving] .fa-dot, .fa-dot[data-state=saving], [data-state=pending] .fa-dot, .fa-dot[data-state=pending] { --fa-dot:#4aa8e0; }
-[data-state=saving] .fa-dot, .fa-dot[data-state=saving] { animation:fa-pulse 1s ease-in-out infinite; }
-[data-state=off] .fa-dot, .fa-dot[data-state=off], [data-state=reconnect] .fa-dot, .fa-dot[data-state=reconnect], [data-state=conflict] .fa-dot, .fa-dot[data-state=conflict], .fa-dot[data-state=unsupported] { --fa-dot:#e0b04a; }
-[data-state=error] .fa-dot, .fa-dot[data-state=error] { --fa-dot:var(--down, #e08585); }
-@keyframes fa-pulse { 50% { opacity:.4; } }
-.fa-panel { background:linear-gradient(180deg, color-mix(in srgb, #fff 10%, transparent), transparent 40%), color-mix(in srgb, var(--surface, #171d1a) 88%, transparent);
-  border-color:color-mix(in srgb, #fff 22%, var(--line, #2c3733)); box-shadow:0 24px 64px rgba(0,0,0,.35), inset 0 1px 0 color-mix(in srgb, #fff 30%, transparent); backdrop-filter:blur(18px) saturate(1.3); -webkit-backdrop-filter:blur(18px) saturate(1.3); }
-.fa-head { display:flex; align-items:center; gap:12px; margin-bottom:10px; }
-.fa-head > div { flex:1; min-width:0; }
-.fa-head p { margin:0; font-size:15px; }
-.fa-status { display:flex; align-items:center; gap:7px; margin-top:3px !important; color:var(--ink-dim, #8fa098); font:12px 'IBM Plex Mono', monospace !important; }
-.fa-orb { display:grid; place-items:center; width:44px; height:44px; flex-shrink:0; border-radius:50%; color:#fff;
-  background:radial-gradient(circle at 50% 28%, rgba(255,255,255,.75) 0 14%, transparent 52%), linear-gradient(160deg, #6fd3ff, #2b8fd6 55%, #1f6fb0); box-shadow:0 4px 14px rgba(43,143,214,.45), inset 0 -3px 8px rgba(0,0,0,.18); }
-.fa-orb[data-state=saved] { background:radial-gradient(circle at 50% 28%, rgba(255,255,255,.75) 0 14%, transparent 52%), linear-gradient(160deg, #8fe8b0, #3fbf7f 55%, #2a9a62); box-shadow:0 4px 14px rgba(63,191,127,.45), inset 0 -3px 8px rgba(0,0,0,.18); }
-.fa-orb[data-state=error], .fa-orb[data-state=conflict] { background:radial-gradient(circle at 50% 28%, rgba(255,255,255,.7) 0 14%, transparent 52%), linear-gradient(160deg, #ffc98a, #e08a4a 55%, #c0632a); box-shadow:0 4px 14px rgba(224,138,74,.45), inset 0 -3px 8px rgba(0,0,0,.18); }
-.vault-dialog .fa-close { width:36px; height:36px; padding:0; border-radius:50%; border:1px solid var(--line, #2c3733); background:transparent; color:var(--ink-dim, #8fa098); }
-.fa-panel .vault-dim { margin:0 0 10px; color:var(--ink-dim, #8fa098); font-size:13.5px; line-height:1.5; }
-.fa-facts { display:grid; grid-template-columns:auto 1fr; gap:4px 12px; margin:0 0 12px; padding:10px 12px; border-radius:12px; background:color-mix(in srgb, var(--surface-2, #202824) 80%, transparent); border:1px solid var(--line, #2c3733); font:12px/1.5 'IBM Plex Mono', monospace; }
-.fa-facts dt { color:var(--ink-dim, #8fa098); }
-.fa-facts dd { margin:0; overflow-wrap:anywhere; }
-.fa-actions, .fa-more { display:flex; flex-wrap:wrap; gap:8px; }
-.fa-more { margin-top:8px; }
-.fa-panel .fa-actions button, .fa-panel .fa-more button { flex:1 1 auto; min-height:44px; padding:10px 14px; border-radius:999px; border:1px solid var(--line, #2c3733); background:var(--surface-2, #202824); color:var(--ink, #eaf0ec); }
-.fa-panel .fa-actions button.fa-primary { border:0; color:#fff; background:linear-gradient(180deg, rgba(255,255,255,.35), rgba(255,255,255,0) 52%), linear-gradient(180deg, #4ab3ec, #2584c9); box-shadow:0 3px 10px rgba(37,132,201,.35), inset 0 1px 0 rgba(255,255,255,.5); text-shadow:0 1px 1px rgba(0,0,0,.2); }
-.fa-panel .fa-more button.fa-quiet { background:transparent; color:var(--ink-dim, #8fa098); }
-.fa-panel button:disabled { opacity:.5; cursor:wait; }
-.fa-note { display:flex; gap:8px; align-items:flex-start; margin:14px 0 0; color:var(--ink-dim, #8fa098); font-size:12px; line-height:1.5; }
-.fa-note .fi { margin-top:2px; color:var(--accent, #6fcf97); }
-.fa-msg { min-height:1.2em; margin:8px 0 0; font:12px/1.5 'IBM Plex Mono', monospace; color:var(--accent, #6fcf97); }
-.fa-msg.fa-bad { color:var(--down, #e08585); }
-@media (prefers-reduced-motion: reduce) { .fa-chip { transition:none; } [data-state=saving] .fa-dot { animation:none; } }
-@media print { .fa-chip { display:none !important; } }
+/* Badge de status nas linhas de Configurações (mesmos tons do .badge do design system). */
+.fs-badge { flex-shrink:0; display:inline-flex; align-items:center; padding:3px 10px; border-radius:999px; font:11px 'IBM Plex Mono', monospace; white-space:nowrap; }
+.fs-badge-pos { background:color-mix(in srgb, var(--up, #6fcf97) 15%, transparent); color:var(--up, #6fcf97); }
+.fs-badge-neg { background:color-mix(in srgb, var(--down, #e08585) 15%, transparent); color:var(--down, #e08585); }
+.fs-badge-warn { background:color-mix(in srgb, var(--warn, #e0c185) 15%, transparent); color:var(--warn, #e0c185); }
+.fs-badge-info { background:color-mix(in srgb, var(--info, #7fa6cf) 15%, transparent); color:var(--info, #7fa6cf); }
+.fs-badge-neutral { background:var(--surface-2, #202824); color:var(--ink-dim, #8fa098); border:1px solid var(--line, #2c3733); }

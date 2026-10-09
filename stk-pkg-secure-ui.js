@@ -563,7 +563,8 @@
   const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   /* ───────── Configurações (aba ou tela cheia) ───────── */
-  const extraSections = [];
+  const extraSections = [], groups = [];
+  let mounted = null, handling = false;
   let pinFailures = 0, pinBlockedUntil = 0;
   // Operações que conferem o PIN dentro do app também têm espera progressiva contra tentativa e erro.
   async function withPin(label, action) {
@@ -614,6 +615,14 @@
   const row = (ic, label, desc, control = '', attrs = '') => '<div class="fs-row"' + attrs + '><span class="fs-ic">' + icon(ic, 18) + '</span><div class="fs-text"><b>' + esc(label) + '</b>' + (desc ? '<span>' + esc(desc) + '</span>' : '') + '</div>' + control + '</div>';
   const actionRow = (id, ic, label, desc, cls = '') => '<button type="button" class="fs-row fs-action ' + cls + '" data-fs="' + id + '"><span class="fs-ic">' + icon(ic, 18) + '</span><span class="fs-text"><b>' + esc(label) + '</b>' + (desc ? '<span>' + esc(desc) + '</span>' : '') + '</span>' + icon('chevron-right', 16) + '</button>';
   const toggle = (id, on, disabled) => '<button type="button" role="switch" class="fs-switch" data-fs="' + id + '" aria-checked="' + on + '"' + (disabled ? ' disabled' : '') + '><span></span></button>';
+  const badge = b => b ? '<span class="fs-badge fs-badge-' + esc(b.tone || 'neutral') + '">' + esc(b.text) + '</span>' : '';
+  // Linha de um grupo do kit (ex.: Salvar no celular): chave liga/desliga, ação ou só informação, com badge de status opcional.
+  const groupRow = (gi, r) => {
+    const id = 'g' + gi + '-' + r.id;
+    if (typeof r.toggle === 'boolean') return row(r.icon, r.label, r.description, badge(r.badge) + toggle(id, r.toggle, r.disabled));
+    if (r.onClick) return actionRow(id, r.icon, r.label, r.description, r.danger ? 'fs-danger' : r.accent ? 'fs-accent' : '');
+    return row(r.icon, r.label, r.description, badge(r.badge));
+  };
   const group = (title, body) => '<section class="fs-group"><h3 class="fs-title">' + esc(title) + '</h3><div class="fs-list">' + body + '</div></section>';
 
   function renderSettings(container) {
@@ -631,11 +640,13 @@
       + row('eye-off', 'Bloquear ao sair do app', 'Bloqueia ao trocar de aba, minimizar ou apagar a tela.', toggle('hide', cfg.lockOnHide))
       + actionRow('recovery', 'shield-check', 'Novo código de recuperação', vault.linked ? 'Gera outro código, válido para todos os apps, e invalida o anterior.' : 'Gera outro código e invalida o anterior.')
       + actionRow('lock', 'lock', 'Bloquear agora', '', 'fs-accent'));
+    groups.forEach((g, gi) => { g.current = g.rows() || []; if (g.current.length) html += group(g.title, g.current.map(r => groupRow(gi, r)).join('')); });
     if (installPrompt) html += group('App', actionRow('install', 'download', 'Instalar app', 'Coloca o ' + appName + ' na tela inicial, como um app.'));
     extraSections.forEach((sec, si) => { html += group(sec.title, sec.rows.map((r, ri) => actionRow('x' + si + '-' + ri, r.icon || 'chevron-right', r.label, r.description || '', r.danger ? 'fs-danger' : '')).join('')); });
     html += group('Sobre', row('database', 'Armazenamento', 'Cofre local criptografado (AES-256-GCM) · ' + Math.max(1, Math.round(size / 1024)) + ' KB neste navegador.')
       + row('info', appName + (VERSION ? ' ' + VERSION : ''), 'Kit de segurança 2.0 · PIN único, biometria e bloqueio automático.'));
     html += group('Zona de perigo', actionRow('destroy', 'trash', 'Apagar todos os dados deste app', 'Remove o cofre deste app. O PIN continua valendo nos outros apps. Não pode ser desfeito.', 'fs-danger'));
+    mounted = container;
     container.innerHTML = '<div class="fs">' + html + '<p class="fs-toast" role="status" aria-live="polite"></p></div>';
     container.onclick = event => handle(event, container);
     container.onchange = event => handle(event, container);
@@ -649,9 +660,13 @@
     const toast = container.querySelector('.fs-toast');
     const say = (text, bad) => { toast.textContent = text; toast.classList.toggle('fs-bad', Boolean(bad)); };
     say('');
-    el.disabled = true;
+    el.disabled = true; handling = true;
     try {
-      if (kind === 'pin') {
+      if (kind[0] === 'g') {
+        const [gi, rid] = [Number(kind.slice(1, kind.indexOf('-'))), kind.slice(kind.indexOf('-') + 1)];
+        const target = groups[gi] && (groups[gi].current || []).find(r => r.id === rid);
+        if (target && target.onClick) { const message = await target.onClick(); if (message) say(message); }
+      } else if (kind === 'pin') {
         const text = vault.secretKind === 'password';
         const changed = await withPin('Digite o PIN atual:', async current => {
           await vault.verifyPin(current);
@@ -712,6 +727,7 @@
         if (target) { el.disabled = false; closeSheet(); await target.onClick(); return; }
       }
     } catch (error) { say(biometricError(error), true); }
+    handling = false;
     const message = toast.textContent, bad = toast.classList.contains('fs-bad');
     renderSettings(container);
     const fresh = container.querySelector('.fs-toast'); fresh.textContent = message; fresh.classList.toggle('fs-bad', bad);
@@ -723,6 +739,16 @@
     addSection(section) {
       if (!section || typeof section.title !== 'string' || !Array.isArray(section.rows)) throw new Error('Seção inválida.');
       extraSections.push({ title: section.title, rows: section.rows.filter(r => r && typeof r.label === 'string' && typeof r.onClick === 'function') });
+    },
+    // Grupo do próprio kit, dentro de Configurações (não vai para o menu lateral). rows() é chamado a cada desenho:
+    // [{ id, icon, label, description, badge: { text, tone: pos|warn|neg|info|neutral }, toggle, disabled, accent, danger, onClick }]
+    addGroup(g) { if (g && typeof g.title === 'string' && typeof g.rows === 'function') groups.push({ title: g.title, rows: g.rows }); },
+    // Redesenha Configurações abertas (status que muda sozinho), mantendo a mensagem da tela.
+    refresh() {
+      if (!mounted || !mounted.isConnected || handling || !vault.key) return;
+      const old = mounted.querySelector('.fs-toast'), message = old ? old.textContent : '', bad = old ? old.classList.contains('fs-bad') : false;
+      renderSettings(mounted);
+      const fresh = mounted.querySelector('.fs-toast'); if (fresh) { fresh.textContent = message; fresh.classList.toggle('fs-bad', bad); }
     },
     mount(container) { renderSettings(container); },
     open() {
