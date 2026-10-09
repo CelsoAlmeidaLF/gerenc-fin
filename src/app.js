@@ -454,7 +454,7 @@
     { icon: 'file-text', label: 'Relatório do mês', description: 'Resultado, categorias, orçamento e projeção', onClick: function(){ openReport(); } },
   ] });
   FinancSettings.addSection({ title: 'Dados e backup', rows: [
-    { icon: 'download', label: 'Exportar backup (JSON)', description: 'Arquivo criptografado com PIN próprio.', onClick: clickById('btnExport') },
+    { icon: 'download', label: 'Exportar backup (JSON)', description: 'Protegido pelas suas 12 palavras: abre em qualquer aparelho com elas.', onClick: clickById('btnExport') },
     { icon: 'upload', label: 'Importar backup (JSON)', description: 'Restaura um backup exportado.', onClick: clickById('btnImport') },
     { icon: 'shield', label: 'Exportar certificado', description: 'Cópia protegida; o mesmo certificado em todos os apps.', onClick: clickById('btnExportCert') },
     { icon: 'shield-check', label: 'Importar certificado', description: 'Usa o certificado de outro aparelho.', onClick: clickById('btnImportCert') },
@@ -673,10 +673,9 @@
       reader.onload=async function(ev){
         try {
           var payload=JSON.parse(ev.target.result), data, oldFormat=false;
-          if (payload && payload.format === 'financ-encrypted-v1') {
-            const password = await window.askSecret('Senha do backup (ou o PIN, em arquivos antigos):', false, true);
-            if (!password) return;
-            data = await FinancVault.unprotect(payload, password, 'gerenc-fin:backup');
+          if (payload && (payload.format === 'financ-encrypted-v1' || payload.format === FinancVault.seed.BACKUP_FORMAT)) {
+            data = await window.importProtected(payload, 'gerenc-fin:backup');
+            if (data === null) return;
           } else if (payload && payload.encrypted) {
             var pin=await window.askSecret('Digite a senha do backup antigo:', false, true);
             if (!pin) return;
@@ -691,7 +690,7 @@
           if (!await askConfirm({title: 'Substituir todos os dados?', text: 'Importar este arquivo vai substituir todos os dados atuais.', action: 'Importar', danger: true})) return;
           normalizeState(data); await commit();
           document.getElementById('saveStatus').textContent='backup importado e salvo criptografado'+(oldFormat?'. Este backup usa a proteção antiga: exporte um novo para ficar com a proteção atual.':'');
-        } catch(err) { showMessage('Backup inválido', 'Backup inválido, senha incorreta ou arquivo não criptografado.'); }
+        } catch(err) { showMessage('Backup inválido', err && err.message && !/^[a-z]/.test(err.message) ? err.message : 'Backup inválido, senha incorreta ou arquivo não criptografado.'); }
       };
       reader.readAsText(file); e.target.value='';
     },

@@ -14,7 +14,7 @@ com o cofre local; não há servidor, conta nem serviço pago.
   pagar parcela (gera despesa paga) e desfazer.
 - **Relatório** (menu ⋮ → Relatório do mês, em tela própria): resultado do mês (receitas, fixas, variáveis, dívidas), despesas por categoria, orçamento mensal
   por categoria e projeção de caixa em 30/60/90 dias.
-- Backup criptografado (Configurações), tema claro/escuro conforme o sistema, funciona offline (service worker).
+- Backup criptografado pelas 12 palavras (Configurações; sem senha extra, abre em outro aparelho com as palavras), tema claro/escuro conforme o sistema, funciona offline (service worker).
 
 ## Regras de cálculo
 

@@ -67,6 +67,82 @@
   function recoveryCode() { return Array.from(random(32), n => n.toString(16).padStart(2, '0')).join('').match(/.{8}/g).join('-'); }
   const importAes = raw => crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt', 'decrypt']);
 
+  // 12 palavras (BIP39, lista em português) → hash de 12 caracteres → raiz.
+  // As palavras são só a forma de escrever o hash; o hash sozinho abre tudo (recuperar o PIN, certificado, backups).
+  // A raiz vem do hash por derivação lenta (PBKDF2, 600 mil): tentar hashes no arquivo de backup fica inviável.
+  const wordlist = () => root.FINANC_BIP39_PT || (typeof require === 'function' ? require('./stk-pkg-bip39-pt.js') : null);
+  const HASH_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'; // Crockford: sem I, L, O, U (não confunde com 1 e 0)
+  const sha256 = async bytes => new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+  const bitsOf = bytes => Array.from(bytes, b => b.toString(2).padStart(8, '0')).join('');
+  const plain = text => String(text).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  const seedError = message => Object.assign(new Error(message), { code: 'SEED_INVALID' });
+  async function wordsFromEntropy(entropy) {
+    if (!(entropy instanceof Uint8Array) || entropy.length !== 16) throw new Error('Semente inválida.');
+    const list = wordlist(), bits = bitsOf(entropy) + bitsOf(await sha256(entropy)).slice(0, 4);
+    return bits.match(/.{11}/g).map(chunk => list[parseInt(chunk, 2)]);
+  }
+  // Aceita maiúsculas, acentos, vírgulas e só as 4 primeiras letras de cada palavra (são únicas na lista).
+  async function entropyFromWords(text) {
+    const list = wordlist(), typed = plain(text).split(/[^a-z]+/).filter(Boolean);
+    if (typed.length !== 12) throw seedError('Digite as 12 palavras (foram ' + typed.length + ').');
+    const bits = typed.map((word, i) => {
+      let index = list.indexOf(word);
+      if (index < 0 && word.length >= 4) { const hits = list.filter(w => w.startsWith(word.slice(0, 4))); if (hits.length === 1) index = list.indexOf(hits[0]); }
+      if (index < 0) throw seedError('A palavra ' + (i + 1) + ' ("' + word + '") não existe na lista.');
+      return index.toString(2).padStart(11, '0');
+    }).join('');
+    const entropy = Uint8Array.from(bits.slice(0, 128).match(/.{8}/g), b => parseInt(b, 2));
+    if (bitsOf(await sha256(entropy)).slice(0, 4) !== bits.slice(128)) throw seedError('As 12 palavras não conferem. Verifique a ordem e a escrita.');
+    return entropy;
+  }
+  async function hashFromEntropy(entropy) {
+    const digest = await sha256(new Uint8Array([...enc.encode('financ-hash-v1:'), ...entropy]));
+    return bitsOf(digest).slice(0, 60).match(/.{5}/g).map(b => HASH_ALPHABET[parseInt(b, 2)]).join('');
+  }
+  const formatHash = hash => hash.match(/.{4}/g).join('-');
+  function normalizeHash(text) {
+    const h = String(text).toUpperCase().replace(/[^0-9A-Z]/g, '').replace(/O/g, '0').replace(/[IL]/g, '1');
+    if (h.length !== 12 || [...h].some(c => !HASH_ALPHABET.includes(c))) throw seedError('O código tem 12 caracteres (letras e números).');
+    return h;
+  }
+  // O que a pessoa digitou na recuperação: 12 palavras, o hash de 12 caracteres ou o código antigo (64 hexadecimais).
+  async function parseSecret(text) {
+    const raw = String(text || '').trim();
+    if (/^[0-9a-f]{8}(-[0-9a-f]{8}){7}$/i.test(raw)) return { kind: 'code', code: raw.toLowerCase() };
+    if (raw.split(/[\s,;]+/).filter(Boolean).length >= 6) return { kind: 'words', hash: await hashFromEntropy(await entropyFromWords(raw)) };
+    return { kind: 'hash', hash: normalizeHash(raw) };
+  }
+  async function rootFromHash(hash) {
+    const material = await crypto.subtle.importKey('raw', enc.encode('financ-root-v1:' + normalizeHash(hash)), 'PBKDF2', false, ['deriveBits']);
+    return new Uint8Array(await crypto.subtle.deriveBits({ name: 'PBKDF2', salt: enc.encode('financ-root-v1'), iterations: ITERATIONS, hash: 'SHA-256' }, material, 256));
+  }
+  async function rootBits(rootBytes, info, length = 256, salt = enc.encode('financ-seed-v1')) {
+    const material = await crypto.subtle.importKey('raw', rootBytes, 'HKDF', false, ['deriveBits']);
+    return new Uint8Array(await crypto.subtle.deriveBits({ name: 'HKDF', hash: 'SHA-256', salt, info: enc.encode(info) }, material, length));
+  }
+  const rootKey = async (rootBytes, info, salt) => importAes(await rootBits(rootBytes, info, 256, salt));
+  // Certificado: sai da raiz (sempre o mesmo para as mesmas palavras), não do PIN.
+  async function certFromRoot(rootBytes) {
+    const id = 'cert-' + Array.from(await rootBits(rootBytes, 'financ:cert-id', 80), b => HASH_ALPHABET[b & 31]).join('').toLowerCase();
+    return { version: 1, id, secret: b64(await rootBits(rootBytes, 'financ:cert-secret')), createdAt: new Date().toISOString(), seed: true };
+  }
+  // Backup v2: chave = raiz + certificado, sal novo por arquivo. Abre com as 12 palavras ou o hash, sem senha extra.
+  const BACKUP_FORMAT = 'financ-backup-v2';
+  async function backupKey(rootBytes, cert, salt, context) {
+    return rootKey(new Uint8Array([...rootBytes, ...unb64(cert.secret)]), BACKUP_FORMAT + ':' + context, salt);
+  }
+  async function sealBackup(value, context, rootBytes) {
+    const cert = await certFromRoot(rootBytes), salt = random(16);
+    return { format: BACKUP_FORMAT, context, certId: cert.id, salt: b64(salt), ...await seal(value, await backupKey(rootBytes, cert, salt, context), context) };
+  }
+  async function openBackup(payload, context, rootBytes) {
+    if (!payload || payload.format !== BACKUP_FORMAT || payload.context !== context || typeof payload.salt !== 'string') throw new Error('Formato incompatível.');
+    const cert = await certFromRoot(rootBytes);
+    if (cert.id !== payload.certId) throw Object.assign(new Error('Este backup é de outras 12 palavras.'), { code: 'SEED_REQUIRED' });
+    return open(payload, await backupKey(rootBytes, cert, unb64(payload.salt), context), context);
+  }
+  const seed = { wordsFromEntropy, entropyFromWords, hashFromEntropy, formatHash, normalizeHash, parseSecret, rootFromHash, certFromRoot, sealBackup, openBackup, BACKUP_FORMAT };
+
   // FINANC ID: um PIN, um código de recuperação, uma biometria e os certificados valem para todos os apps
   // do mesmo endereço (mesma origem = mesmo localStorage). Guarda uma chave principal aleatória, protegida
   // pelo PIN, pelo código e pela biometria; cada app guarda a própria chave de dados embrulhada por ela.
@@ -94,21 +170,57 @@
       try { this.onWrite(); } catch (_) {}
       return record;
     }
-    async create(pin, recovery) {
+    // Cria com uma semente nova: devolve { master, words, hash, rootBytes } (palavras e hash: mostrar uma vez).
+    async create(pin) {
       if (this.exists) throw new Error('O FINANC ID já existe.');
       const raw = random(32);
       try {
         const master = b64(raw);
         const password = await protect(master, pin, idContext('password'));
-        const rec = await protectWithSecret(master, recovery, idContext('recovery'));
-        this.write(r => { r.password = password; r.recovery = rec; });
-        return master;
+        const parts = await this.seedParts(master, random(16), []);
+        this.write(r => { r.password = password; r.recovery = parts.recovery; r.seed = parts.seed; r.certificates = parts.certificates; });
+        return { master, words: parts.words, hash: parts.hash, rootBytes: parts.rootBytes };
       } finally { raw.fill(0); }
     }
+    get hasSeed() { try { return Boolean(this.read().seed); } catch (_) { return false; } }
+    // Semente cifrada pela chave principal; recuperação do PIN pela raiz das palavras; certificado da semente
+    // como atual (os anteriores ficam na lista para abrir backups antigos).
+    async seedParts(master, entropy, previousCerts) {
+      const hash = await hashFromEntropy(entropy), rootBytes = await rootFromHash(hash);
+      const raw = unb64(master);
+      let masterKey; try { masterKey = await importAes(raw); } finally { raw.fill(0); }
+      const cert = await certFromRoot(rootBytes);
+      const certs = [cert, ...previousCerts.filter(c => c.id !== cert.id)].map(cleanCert);
+      return {
+        recovery: { format: 'financ-seed-v1', ...await seal(master, await rootKey(rootBytes, idContext('recovery')), idContext('recovery')) },
+        seed: await seal(b64(entropy), masterKey, idContext('seed')),
+        certificates: await seal(certs, masterKey, idContext('certificates')),
+        words: await wordsFromEntropy(entropy), hash: formatHash(hash), rootBytes,
+      };
+    }
+    // Troca a semente (migração do código antigo ou "gerar novas 12 palavras"). Devolve { words, hash, rootBytes }.
+    async setSeed(master, entropy) {
+      const raw = unb64(master);
+      let masterKey; try { masterKey = await importAes(raw); } finally { raw.fill(0); }
+      let previous = []; try { previous = await this.certificates(masterKey); } catch (_) {}
+      const parts = await this.seedParts(master, entropy, previous);
+      this.write(r => { r.recovery = parts.recovery; r.seed = parts.seed; r.certificates = parts.certificates; });
+      return { words: parts.words, hash: parts.hash, rootBytes: parts.rootBytes };
+    }
+    async seed(masterKey) { const sealed = this.read().seed; return sealed ? unb64(await open(sealed, masterKey, idContext('seed'))) : null; }
     // 'pin' (6 números) ou 'password' (senha longa, opcional e mais forte contra força bruta offline).
     get kind() { try { return this.read().secretKind === 'password' ? 'password' : 'pin'; } catch (_) { return 'pin'; } }
     withPin(pin) { return unprotect(this.read().password, pin, idContext('password')); }
-    withRecovery(code) { return unprotect(this.read().recovery, code, idContext('recovery')); }
+    // 12 palavras ou hash (FINANC ID com semente); código de 8 blocos só em FINANC ID ainda não migrado.
+    async withRecovery(text) {
+      const rec = this.read().recovery, secret = await parseSecret(text);
+      if (rec.format === 'financ-seed-v1') {
+        if (secret.kind === 'code') throw seedError('Este aparelho usa as 12 palavras. O código antigo de 8 blocos não vale mais.');
+        return open(rec, await rootKey(await rootFromHash(secret.hash), idContext('recovery')), idContext('recovery'));
+      }
+      if (secret.kind !== 'code') throw seedError('Este aparelho ainda usa o código de recuperação antigo (8 blocos).');
+      return unprotect(rec, secret.code, idContext('recovery'));
+    }
     async withBiometric(prfSecret) {
       const b = this.read().biometric;
       if (!b || typeof b.salt !== 'string') throw new Error('Biometria não configurada.');
@@ -121,7 +233,6 @@
       const password = kind === 'password' ? await protectPassphrase(master, secret, idContext('password')) : await protect(master, secret, idContext('password'));
       this.write(r => { r.password = password; if (kind === 'password') r.secretKind = 'password'; else delete r.secretKind; });
     }
-    async setRecovery(master, code) { const rec = await protectWithSecret(master, code, idContext('recovery')); this.write(r => { r.recovery = rec; }); }
     async setBiometric(master, credentialId, prfSalt, prfSecret) {
       const salt = random(16);
       const sealed = await seal(master, await hkdfKey(prfSecret, salt, idContext('biometric')), idContext('biometric'));
@@ -146,7 +257,7 @@
       this.onError = onError; this.key = null; this.values = null; this.envelope = null;
       this.pending = null; this.dirty = false; this.lastStored = null; this.closing = false; this.prefs = null;
       this.sessionKey = null; this.session = null; this.onStored = () => {};
-      this.identity = new Identity(storage); this.masterKey = null; this.certs = null;
+      this.identity = new Identity(storage); this.masterKey = null; this.certs = null; this.root = null;
     }
     get exists() { return this.storage.getItem(this.storageKey) !== null; }
     // Segredo de abertura: PIN de 6 números ou senha longa (só com o FINANC ID).
@@ -158,13 +269,15 @@
     }
     context(part) { return this.appId + ':vault-v1:' + part; }
     assertOpen() { if (!this.key || !this.values || this.closing) throw new Error('Cofre bloqueado.'); }
-    // Sem FINANC ID: cria um com este PIN e devolve o código de recuperação (exibir uma vez).
-    // Com FINANC ID: o PIN é o dele e não há código novo (devolve null).
-    async create(pin, initial = {}, recovery = recoveryCode()) {
+    // Sem FINANC ID: cria um com este PIN e devolve { words, hash } (exibir uma vez).
+    // Com FINANC ID: o PIN é o dele e não há palavras novas (devolve null).
+    async create(pin, initial = {}) {
       if (this.exists) throw new Error('O cofre já existe.');
       const hadIdentity = this.identity.exists;
       if (hadIdentity ? typeof pin !== 'string' || !pin : !pinOK(pin)) throw new Error('Use um PIN de 6 números.');
-      const master = hadIdentity ? await this.identity.withPin(pin) : await this.identity.create(pin, recovery);
+      const created = hadIdentity ? null : await this.identity.create(pin);
+      const master = created ? created.master : await this.identity.withPin(pin);
+      if (created) this.root = created.rootBytes;
       const rawKey = random(32);
       try {
         this.key = await importAes(rawKey);
@@ -174,7 +287,7 @@
         await this.sealSession(b64(rawKey), master);
         this.dirty = true;
         await this.flush();
-        return hadIdentity ? null : recovery;
+        return created ? { words: created.words, hash: created.hash } : null;
       } catch (error) { this.forget(); throw error; }
       finally { rawKey.fill(0); }
     }
@@ -202,7 +315,8 @@
       await this.openWith(await open(envelope.identity, this.masterKey, this.context('identity')), envelope, stored, master);
     }
     // Abre com o PIN. Devolve o que a interface precisa fazer em seguida:
-    //   { recovery }         FINANC ID criado agora (primeiro app migrado): mostrar o código uma vez.
+    //   { seed }             FINANC ID criado ou migrado agora: mostrar as 12 palavras e o hash uma vez.
+    //   { recovery }         app com PIN próprio: código antigo dele, renovado (mostrar uma vez).
     //   { needsIdentityPin } app aberto com o PIN antigo, mas o FINANC ID tem outro PIN: pedir o PIN FINANC.
     // Erro 'LEGACY_PIN': o PIN é o do FINANC ID, mas este app ainda usa o PIN antigo dele.
     async unlock(secret, recovery = false) {
@@ -210,9 +324,10 @@
       if (envelope.identity) {
         const master = recovery ? await this.identity.withRecovery(secret) : await this.identity.withPin(secret);
         await this.openLinked(master, envelope, stored);
-        return {};
+        return this.ensureSeed(master);
       }
       const kind = recovery ? 'recovery' : 'password';
+      if (recovery) secret = String(secret).trim().toLowerCase();
       try {
         await this.openWith(await unprotect(envelope[kind], secret, this.context(kind)), envelope, stored);
       } catch (error) {
@@ -223,19 +338,31 @@
       }
       return recovery ? {} : this.linkAfterLegacy(secret);
     }
-    async linkAfterLegacy(pin, recovery) {
-      if (!this.identity.exists) { const code = recovery || recoveryCode(); await this.link(await this.identity.create(pin, code)); return { recovery: code }; }
-      try { await this.link(await this.identity.withPin(pin)); return {}; }
+    async linkAfterLegacy(pin) {
+      if (!this.identity.exists) {
+        const created = await this.identity.create(pin);
+        await this.link(created.master); this.root = created.rootBytes;
+        return { seed: { words: created.words, hash: created.hash } };
+      }
+      try { const master = await this.identity.withPin(pin); await this.link(master); return this.ensureSeed(master); }
       catch (error) { if (error.name === 'OperationError') return { needsIdentityPin: true }; throw error; }
     }
     // Com o app aberto pelo PIN antigo: liga ao FINANC ID usando o PIN FINANC.
-    async linkWithIdentityPin(pin) { this.assertOpen(); await this.link(await this.identity.withPin(pin)); }
+    async linkWithIdentityPin(pin) { this.assertOpen(); const master = await this.identity.withPin(pin); await this.link(master); return this.ensureSeed(master); }
+    // FINANC ID antigo (código de 8 blocos): ganha as 12 palavras na primeira abertura. Devolve { seed } ou {}.
+    async ensureSeed(master) {
+      if (this.identity.hasSeed) return {};
+      const made = await this.identity.setSeed(master, random(16));
+      await this.useMaster(master); this.root = made.rootBytes;
+      return { seed: { words: made.words, hash: made.hash } };
+    }
     // PIN FINANC digitado primeiro (erro LEGACY_PIN): abre com o PIN antigo e liga.
     async unlockLegacy(oldPin, identityPin) {
       const { stored, envelope } = this.readEnvelope();
       const master = await this.identity.withPin(identityPin);
       await this.openWith(await unprotect(envelope.password, oldPin, this.context('password')), envelope, stored);
       await this.link(master);
+      return this.ensureSeed(master);
     }
     // Troca PIN, código e biometria próprios do app pela chave embrulhada pelo FINANC ID.
     async link(master) {
@@ -253,11 +380,12 @@
     }
     async unlockBiometric(prfSecret) {
       const { stored, envelope } = this.readEnvelope();
-      if (envelope.identity) { await this.openLinked(await this.identity.withBiometric(prfSecret), envelope, stored); return; }
+      if (envelope.identity) { const master = await this.identity.withBiometric(prfSecret); await this.openLinked(master, envelope, stored); return this.ensureSeed(master); }
       const b = envelope.biometric;
       if (!b || typeof b.salt !== 'string') throw new Error('Biometria não configurada.');
       const key = await hkdfKey(prfSecret, unb64(b.salt), this.context('biometric'));
       await this.openWith(await open(b, key, this.context('biometric')), envelope, stored);
+      return {};
     }
     async masterFromPin(pin) {
       if (typeof pin !== 'string' || !pin) throw new Error('Digite o PIN ou a senha.');
@@ -310,9 +438,16 @@
       if (kind !== 'pin' && kind !== 'password') throw new Error('Tipo inválido.');
       await this.identity.setPin(await this.masterFromPin(current), next, kind);
     }
+    // Ligado ao FINANC ID: gera novas 12 palavras e devolve { words, hash }. As palavras antigas deixam de recuperar o PIN;
+    // o certificado antigo fica guardado (backups antigos continuam abrindo neste aparelho).
+    // App com PIN próprio: devolve um código novo de 8 blocos (formato antigo).
     async rotateRecovery(pin, recovery = recoveryCode()) {
       this.assertOpen();
-      if (this.linked) { await this.identity.setRecovery(await this.masterFromPin(pin), recovery); return recovery; }
+      if (this.linked) {
+        const master = await this.masterFromPin(pin), made = await this.identity.setSeed(master, random(16));
+        await this.useMaster(master); this.root = made.rootBytes;
+        return { words: made.words, hash: made.hash };
+      }
       const raw = await unprotect(this.envelope.password, pin, this.context('password'));
       this.envelope.recovery = await protectWithSecret(raw, recovery, this.context('recovery'));
       this.dirty = true; await this.flush();
@@ -363,26 +498,64 @@
       } else if (typeof saved === 'string' && !envelope.identity) await this.openWith(saved, envelope, stored);
       else throw new Error('Sessão inválida.');
     }
-    // O código usado deixa de valer: um novo é gerado e devolvido para ser exibido uma única vez.
-    // Devolve { recovery, needsIdentityPin? }. Sem cofre deste app ainda, redefine o PIN FINANC e cria o cofre.
+    // Com as 12 palavras (ou o hash) define um PIN novo. As palavras continuam as mesmas (backups seguem abrindo).
+    // FINANC ID ainda com código antigo: o código vira 12 palavras novas. Devolve { seed?, recovery?, needsIdentityPin? }.
+    // Sem cofre deste app ainda, redefine o PIN FINANC e cria o cofre.
     async resetPassword(recovery, newPin, nextRecovery = recoveryCode(), initial = {}) {
       if (!pinOK(newPin)) throw new Error('Use um PIN de 6 números.');
       if (!this.exists || this.linked) {
         const master = await this.identity.withRecovery(recovery);
         await this.identity.setPin(master, newPin);
-        await this.identity.setRecovery(master, nextRecovery);
+        const status = this.identity.hasSeed ? {} : await (async () => {
+          const made = await this.identity.setSeed(master, random(16));
+          return { seed: { words: made.words, hash: made.hash } };
+        })();
         if (this.exists) await this.unlock(newPin); else await this.create(newPin, initial);
-        return { recovery: nextRecovery };
+        return status;
       }
       // App ainda com PIN próprio: abre com o código dele e tenta ligar ao FINANC ID com o novo PIN.
-      await this.unlock(recovery, true);
-      const status = await this.linkAfterLegacy(newPin, nextRecovery);
-      if (!status.needsIdentityPin) return status; // { recovery } se criou o FINANC ID; {} se ligou ao existente
-      const raw = await unprotect(this.envelope.recovery, recovery, this.context('recovery'));
+      const code = String(recovery).trim().toLowerCase();
+      await this.unlock(code, true);
+      const status = await this.linkAfterLegacy(newPin);
+      if (!status.needsIdentityPin) return status; // { seed } se criou ou migrou o FINANC ID; {} se ligou ao existente
+      const raw = await unprotect(this.envelope.recovery, code, this.context('recovery'));
       this.envelope.password = await protect(raw, newPin, this.context('password'));
       this.envelope.recovery = await protectWithSecret(raw, nextRecovery, this.context('recovery'));
       this.dirty = true; await this.flush();
       return { recovery: nextRecovery, needsIdentityPin: true };
+    }
+    // Raiz das 12 palavras (só na memória, com o cofre aberto): calculada uma vez por sessão.
+    async rootBytes() {
+      this.assertOpen();
+      if (this.root) return this.root;
+      if (!this.masterKey) throw new Error('Ligue este app ao PIN único para usar as 12 palavras.');
+      const entropy = await this.identity.seed(this.masterKey);
+      if (!entropy) throw new Error('Este aparelho ainda não tem as 12 palavras. Bloqueie e abra de novo com o PIN.');
+      try { this.root = await rootFromHash(await hashFromEntropy(entropy)); } finally { entropy.fill(0); }
+      return this.root;
+    }
+    get hasSeed() { return Boolean(this.masterKey && this.identity.hasSeed); }
+    // Mostra as palavras de novo (pede o PIN).
+    async revealSeed(pin) {
+      this.assertOpen();
+      const raw = unb64(await this.masterFromPin(pin));
+      let key; try { key = await importAes(raw); } finally { raw.fill(0); }
+      const entropy = await this.identity.seed(key);
+      if (!entropy) throw new Error('Este aparelho ainda não tem as 12 palavras.');
+      try { return { words: await wordsFromEntropy(entropy), hash: formatHash(await hashFromEntropy(entropy)) }; } finally { entropy.fill(0); }
+    }
+    // Backup v2: cifrado pela raiz das 12 palavras + certificado, sem senha extra.
+    async exportBackup(value, context) { return sealBackup(value, context, await this.rootBytes()); }
+    // Sem segredo: usa as palavras deste aparelho (erro SEED_REQUIRED se o backup é de outras palavras).
+    async importBackup(payload, context, secretText) {
+      this.assertOpen();
+      if (!secretText) return openBackup(payload, context, await this.rootBytes());
+      const secret = await parseSecret(secretText);
+      if (secret.kind === 'code') throw seedError('Digite as 12 palavras ou o código de 12 caracteres.');
+      const rootOther = await rootFromHash(secret.hash);
+      try { return await openBackup(payload, context, rootOther); }
+      catch (error) { if (error.code === 'SEED_REQUIRED') throw seedError('Essas palavras não abrem este backup.'); throw error; }
+      finally { rootOther.fill(0); }
     }
     // Certificados FINANC (compartilhados). Só com o cofre aberto e ligado ao FINANC ID.
     get certificates() { return this.certs ? this.certs.map(c => ({ ...c })) : []; }
@@ -424,7 +597,7 @@
       const keys = Array.from({ length: this.storage.length }, (_, i) => this.storage.key(i));
       for (const key of keys) if (matches(key) && this.storage.getItem(key) === this.getItem(key)) this.storage.removeItem(key);
     }
-    forget() { this.key = null; this.values = null; this.envelope = null; this.prefs = null; this.session = null; this.closing = false; this.masterKey = null; this.certs = null; this.rawForLink = null; }
+    forget() { this.key = null; this.values = null; this.envelope = null; this.prefs = null; this.session = null; this.closing = false; this.masterKey = null; this.certs = null; this.rawForLink = null; if (this.root) this.root.fill(0); this.root = null; }
     async lock() { this.closing = true; try { await this.flush(); this.forget(); } catch (error) { this.closing = false; throw error; } }
   }
 
@@ -476,7 +649,7 @@
       try { PublicKeyCredential.signalUnknownCredential({ rpId: location.hostname, credentialId: b64url(credentialId) }).catch(() => {}); } catch (_) {}
     },
   };
-  const api = { Vault, Identity, protect, protectPassphrase, passphraseOK, PASSPHRASE_MIN, unprotect, pinOK, recoveryCode, webauthn, AUTO_LOCK_MINUTES, certOK };
+  const api = { Vault, Identity, protect, protectPassphrase, passphraseOK, PASSPHRASE_MIN, unprotect, pinOK, recoveryCode, webauthn, AUTO_LOCK_MINUTES, certOK, seed };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.FinancVault = api;
 })(globalThis);

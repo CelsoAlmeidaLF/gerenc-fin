@@ -47,7 +47,7 @@
     + '<h1 id="vaultTitle">Dados protegidos</h1><p id="vaultHelp"></p>'
     + '<form id="vaultForm" novalidate' + NO_AUTOFILL + '>'
     + '<label id="vaultPasswordLabel" class="vault-field" hidden>Senha<input id="vaultPassword" type="password"' + NO_AUTOFILL + ' autocapitalize="none" spellcheck="false" maxlength="256"></label>'
-    + '<label id="vaultRecoveryLabel" class="vault-field" hidden>Código de recuperação<input id="vaultRecovery"' + NO_AUTOFILL + ' autocapitalize="none" spellcheck="false" placeholder="xxxxxxxx-xxxxxxxx-…"></label>'
+    + '<label id="vaultRecoveryLabel" class="vault-field" hidden>12 palavras ou código de 12 caracteres<textarea id="vaultRecovery"' + NO_AUTOFILL + ' autocapitalize="none" autocorrect="off" spellcheck="false" rows="3" placeholder="abacate abaixo … ou XXXX-XXXX-XXXX"></textarea></label>'
     + '<div class="vault-pin-wrap" id="vaultPinWrap"><input id="vaultPin" name="vault-pin" class="vault-pin-input"' + NO_AUTOFILL + ' type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" aria-label="PIN de 6 números" aria-describedby="vaultHelp vaultMessage">'
     + '<div class="vault-dots" id="vaultDots" aria-hidden="true">' + '<span></span>'.repeat(6) + '</div></div>'
     + '<div class="vault-keypad" id="vaultKeypad">' + keys.map(k => k === 'bio'
@@ -183,7 +183,7 @@
     'join': ['Use seu PIN', 'Você já tem um PIN neste aparelho. Digite-o para abrir o ' + appName + '.', 'Entrar', 'shield'],
     'create': ['Crie seu PIN', 'Escolha 6 números. O mesmo PIN vai abrir todos os apps deste aparelho.', 'Continuar', 'shield'],
     'create-confirm': ['Confirme o PIN', 'Digite o mesmo PIN mais uma vez.', 'Criar PIN', 'shield'],
-    'recover-code': ['Recuperar acesso', 'Informe o código de recuperação que você guardou (o atual ou o antigo deste app).', 'Continuar', 'key'],
+    'recover-code': ['Recuperar acesso', 'Digite as 12 palavras (ou as 4 primeiras letras de cada) ou o código de 12 caracteres. Quem ainda não recebeu as palavras usa o código antigo de 8 blocos.', 'Continuar', 'key'],
     'recover-pin': ['Novo PIN', 'Escolha um novo PIN de 6 números.', 'Continuar', 'key'],
     'recover-confirm': ['Confirme o novo PIN', 'Digite o novo PIN mais uma vez.', 'Definir novo PIN', 'key'],
   };
@@ -268,8 +268,9 @@
     try {
       await legacyCleanup; await sessionReady;
       const secret = await bio.evaluate(info.credentialId, info.prfSalt);
-      try { await vault.unlockBiometric(secret); } finally { secret.fill(0); }
-      failedAttempts = 0; get('vaultForm').reset(); finish();
+      let status; try { status = await vault.unlockBiometric(secret); } finally { secret.fill(0); }
+      failedAttempts = 0; get('vaultForm').reset();
+      if (status && status.seed) showSeed(status.seed, '', 'migrated'); else finish();
     } catch (error) {
       if (!auto) get('vaultMessage').textContent = error.name === 'NotAllowedError' ? 'Biometria cancelada ou não reconhecida. Use o PIN.'
         : error.name === 'OperationError' ? 'Esta biometria não abre este cofre. Use o PIN e ative a biometria de novo.'
@@ -331,6 +332,69 @@
     // O app só começa depois de o certificado antigo dele passar para o certificado FINANC.
     adoptCertificate().catch(() => {}).then(resolveReady);
   }
+  // 12 palavras + código de 12 caracteres: mostrados uma vez ao criar ou migrar (depois, em Configurações com o PIN).
+  // kind: 'new' (PIN FINANC criado) ou 'migrated' (o código antigo de 8 blocos virou 12 palavras).
+  function seedMarkup(seed) {
+    return '<ol class="vault-seed">' + seed.words.map(w => '<li>' + esc(w) + '</li>').join('') + '</ol>'
+      + '<p class="vault-seed-label">Ou o código de 12 caracteres:</p><p class="vault-hash">' + esc(seed.hash) + '</p>';
+  }
+  const SEED_HELP = 'As palavras (ou o código) recuperam o PIN de todos os apps e abrem seus backups em qualquer aparelho. Quem tiver este papel abre seus backups: não fotografe nem envie por mensagem.';
+  function showSeed(seed, pin, kind) {
+    panel.replaceChildren();
+    panel.classList.add('vault-recovery');
+    const box = document.createElement('div');
+    box.innerHTML = '<div class="vault-badge">' + icon('key', 22) + '</div><h1 id="vaultTitle"></h1><p></p>' + seedMarkup(seed);
+    box.querySelector('h1').textContent = kind === 'migrated' ? 'Agora são 12 palavras' : 'Guarde suas 12 palavras';
+    box.querySelector('p').textContent = (kind === 'migrated' ? 'O código antigo de 8 blocos deixou de valer. ' : '') + SEED_HELP + ' Você pode vê-las de novo em Configurações.';
+    const pdf = document.createElement('button'); pdf.type = 'button'; pdf.className = 'vault-secondary';
+    pdf.innerHTML = icon('download', 16) + '<span>Baixar PDF para imprimir</span>';
+    pdf.onclick = () => downloadSeedPdf(seed);
+    const done = document.createElement('button'); done.id = 'vaultRecoveryDone'; done.type = 'button'; done.className = 'vault-primary';
+    done.textContent = 'Guardei as palavras'; done.onclick = () => { if (pin) offerBiometric(pin); else finish(); };
+    panel.append(...box.childNodes, pdf, done);
+    done.focus();
+  }
+  // PDF de uma página, montado aqui mesmo (sem biblioteca nem servidor): palavras, código e instruções.
+  const WIN_ANSI = { '•': 0x95, '–': 0x96, '—': 0x97, '“': 0x93, '”': 0x94, '‘': 0x91, '’': 0x92 };
+  const pdfText = text => '(' + Array.from(String(text), ch => {
+    const code = WIN_ANSI[ch] || ch.charCodeAt(0);
+    if (ch === '(' || ch === ')' || ch === '\\') return '\\' + ch;
+    return code >= 32 && code < 127 ? ch : code <= 255 ? '\\' + code.toString(8).padStart(3, '0') : '?';
+  }).join('') + ')';
+  function seedPdf(seed) {
+    const out = [], line = (font, size, x, y, text) => out.push('BT /' + font + ' ' + size + ' Tf ' + x + ' ' + y + ' Td ' + pdfText(text) + ' Tj ET');
+    const today = new Date().toLocaleDateString('pt-BR');
+    line('F2', 18, 50, 790, 'FINANC – suas 12 palavras');
+    line('F1', 10, 50, 772, 'Gerado em ' + today + ' no aparelho. Vale para todos os apps FINANC deste endereço.');
+    out.push('0.6 G 1 w 50 548 495 200 re S');
+    seed.words.forEach((w, i) => line('F3', 15, 66 + (i % 3) * 160, 718 - Math.floor(i / 3) * 46, (i + 1 < 10 ? ' ' : '') + (i + 1) + '. ' + w));
+    line('F1', 11, 50, 518, 'Ou o código de 12 caracteres (vale o mesmo que as palavras):');
+    line('F3', 24, 50, 488, seed.hash);
+    ['• As palavras (ou o código) recuperam o PIN de todos os apps se você esquecer.',
+      '• Elas também abrem seus backups em qualquer aparelho, sem outra senha.',
+      '• Quem tiver este papel abre seus backups: não fotografe nem envie por mensagem.',
+      '• Depois de imprimir, apague este arquivo PDF do celular e do computador.',
+      '• Guarde o papel em local seguro, longe do celular.'].forEach((t, i) => line('F1', 11, 50, 440 - i * 20, t));
+    const stream = out.join('\n');
+    const objs = ['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R /F3 6 0 R >> >> /Contents 7 0 R >>',
+      '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>',
+      '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>',
+      '<< /Type /Font /Subtype /Type1 /BaseFont /Courier-Bold /Encoding /WinAnsiEncoding >>',
+      '<< /Length ' + stream.length + ' >>\nstream\n' + stream + '\nendstream'];
+    let pdf = '%PDF-1.4\n'; const offsets = [];
+    objs.forEach((body, i) => { offsets.push(pdf.length); pdf += (i + 1) + ' 0 obj\n' + body + '\nendobj\n'; });
+    const xref = pdf.length;
+    pdf += 'xref\n0 ' + (objs.length + 1) + '\n0000000000 65535 f \n' + offsets.map(o => String(o).padStart(10, '0') + ' 00000 n \n').join('')
+      + 'trailer\n<< /Size ' + (objs.length + 1) + ' /Root 1 0 R >>\nstartxref\n' + xref + '\n%%EOF\n';
+    return new Blob([pdf], { type: 'application/pdf' });
+  }
+  function downloadSeedPdf(seed) {
+    const url = URL.createObjectURL(seedPdf(seed));
+    const a = document.createElement('a'); a.href = url; a.download = 'financ-12-palavras.pdf'; document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  window.FinancSeedPdf = seedPdf; // usado nos testes
   // kind: 'new' (PIN FINANC criado), 'renewed' (código usado foi trocado) ou 'migrated' (primeiro app ligado ao FINANC ID).
   function showRecoveryCode(recovery, pin, kind = 'new') {
     // Show once and require acknowledgement before entering the application.
@@ -360,8 +424,9 @@
     get('vaultMessage').textContent = '';
     const pin = passwordMode() ? get('vaultPassword').value : pinInput.value;
     if (step === 'recover-code') {
-      recoveryInput = get('vaultRecovery').value.trim().toLowerCase();
-      if (!/^[0-9a-f]{8}(-[0-9a-f]{8}){7}$/.test(recoveryInput)) { get('vaultMessage').textContent = 'Código de recuperação inválido.'; return; }
+      recoveryInput = get('vaultRecovery').value.trim();
+      try { await FinancVault.seed.parseSecret(recoveryInput); }
+      catch (error) { get('vaultMessage').textContent = error.code === 'SEED_INVALID' ? error.message : 'Palavras ou código inválidos.'; return; }
       go('recover-pin'); return;
     }
     if (passwordMode() ? !pin : !FinancVault.pinOK(pin)) { fail(passwordMode() ? 'Digite sua senha.' : 'Digite exatamente 6 números.'); return; }
@@ -379,8 +444,8 @@
         const status = await vault.resetPassword(recoveryInput, pin, undefined, initial);
         done(); await afterUnlock(status, pin, 'renewed');
       } else if (!vault.exists) {
-        const recovery = await vault.create(pin, initial);
-        done(); if (recovery) showRecoveryCode(recovery, pin); else offerBiometric(pin);
+        const created = await vault.create(pin, initial);
+        done(); if (created) showSeed(created, pin, 'new'); else offerBiometric(pin);
       } else {
         let status;
         try { status = await vault.unlock(pin); }
@@ -400,8 +465,8 @@
       failedAttempts += 1;
       const wrong = error.name === 'OperationError';
       const delay = wrong ? Math.min(30000, failedAttempts * failedAttempts * 500) : 0;
-      if (wrong && step === 'recover-confirm') go('recover-code');
-      fail(wrong ? (step === 'recover-code' ? 'Código de recuperação incorreto.' : passwordMode() ? 'Senha incorreta.' : 'PIN incorreto.') : error.message);
+      if ((wrong || error.code === 'SEED_INVALID') && step === 'recover-confirm') go('recover-code');
+      fail(wrong ? (step === 'recover-code' ? 'Palavras ou código incorretos.' : passwordMode() ? 'Senha incorreta.' : 'PIN incorreto.') : error.message);
       if (delay) {
         const message = get('vaultMessage').textContent; const until = Date.now() + delay;
         clearInterval(countdown);
@@ -417,8 +482,10 @@
   function done() { failedAttempts = 0; firstPin = ''; recoveryInput = ''; get('vaultForm').reset(); }
   // Depois de abrir: mostra o código FINANC novo, ou liga o app ao PIN FINANC quando os PINs eram diferentes.
   async function afterUnlock(status, pin, kind) {
-    if (status.needsIdentityPin) pin = (await askIdentityPin()) || pin;
-    if (status.recovery) showRecoveryCode(status.recovery, pin, kind); else offerBiometric(pin);
+    if (status.needsIdentityPin) { const linked = await askIdentityPin(); if (linked) { pin = linked.pin; if (linked.status.seed) status = linked.status; } }
+    if (status.seed) showSeed(status.seed, pin, kind === 'renewed' ? 'new' : 'migrated');
+    else if (status.recovery) showRecoveryCode(status.recovery, pin, kind);
+    else offerBiometric(pin);
   }
   async function askIdentityPin() {
     const text = vault.identity.kind === 'password';
@@ -427,7 +494,7 @@
     for (let tries = 0; tries < 5; tries++) {
       const pin = await window.askSecret(label, false, text);
       if (!pin) return null;
-      try { await vault.linkWithIdentityPin(pin); return pin; }
+      try { return { pin, status: await vault.linkWithIdentityPin(pin) }; }
       catch (error) { if (error.name !== 'OperationError') throw error; label = text ? 'Senha incorreta. Tente de novo:' : 'PIN incorreto. Tente de novo:'; }
     }
     return null;
@@ -611,6 +678,26 @@
       dialog.oncancel = event => event.preventDefault();
     });
   }
+  function showSeedDialog(seed, title) {
+    return dialogBox((dialog, close) => {
+      dialog.innerHTML = '<div class="vault-dialog-head"><span class="vault-badge">' + icon('key', 18) + '</span><p><b></b></p></div><p class="vault-dim"></p>' + seedMarkup(seed)
+        + '<div class="vault-dialog-actions"><button type="button" data-a="pdf">' + icon('download', 16) + 'Baixar PDF</button><button type="button" data-a="ok" class="vault-dialog-primary">Fechar</button></div>';
+      dialog.querySelector('b').textContent = title; dialog.querySelector('.vault-dim').textContent = SEED_HELP;
+      dialog.querySelector('[data-a=pdf]').onclick = () => downloadSeedPdf(seed);
+      dialog.querySelector('[data-a=ok]').onclick = () => close(true);
+    });
+  }
+  // Pede as 12 palavras (ou o código) de outro backup, em texto visível.
+  function askSeed(label) {
+    return dialogBox((dialog, close) => {
+      dialog.innerHTML = '<form method="dialog"><div class="vault-dialog-head"><span class="vault-badge">' + icon('key', 18) + '</span><p></p></div><textarea rows="3" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="12 palavras ou XXXX-XXXX-XXXX"></textarea><div class="vault-dialog-actions"><button type="button" data-a="no">Cancelar</button><button>Abrir backup</button></div></form>';
+      dialog.querySelector('p').textContent = label;
+      const area = noAutofill(dialog.querySelector('textarea'));
+      dialog.querySelector('[data-a=no]').onclick = () => close(null);
+      dialog.querySelector('form').onsubmit = event => { event.preventDefault(); close(area.value.trim() || null); };
+      setTimeout(() => area.focus(), 0);
+    });
+  }
   const esc = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const row = (ic, label, desc, control = '', attrs = '') => '<div class="fs-row"' + attrs + '><span class="fs-ic">' + icon(ic, 18) + '</span><div class="fs-text"><b>' + esc(label) + '</b>' + (desc ? '<span>' + esc(desc) + '</span>' : '') + '</div>' + control + '</div>';
   const actionRow = (id, ic, label, desc, cls = '') => '<button type="button" class="fs-row fs-action ' + cls + '" data-fs="' + id + '"><span class="fs-ic">' + icon(ic, 18) + '</span><span class="fs-text"><b>' + esc(label) + '</b>' + (desc ? '<span>' + esc(desc) + '</span>' : '') + '</span>' + icon('chevron-right', 16) + '</button>';
@@ -638,7 +725,9 @@
       + row('fingerprint', 'Biometria', bioOn ? 'Ativada: digital, rosto ou bloqueio de tela.' : bioAvailable ? 'Desativada.' : 'Indisponível neste aparelho ou navegador.', toggle('bio', bioOn, !bioOn && !bioAvailable))
       + row('clock', 'Bloqueio automático', 'Sem uso por este tempo, o app bloqueia.', '<select class="fs-select" data-fs="autolock" aria-label="Bloqueio automático">' + FinancVault.AUTO_LOCK_MINUTES.map(m => '<option value="' + m + '"' + (m === cfg.autoLockMinutes ? ' selected' : '') + '>' + m + ' min</option>').join('') + '</select>')
       + row('eye-off', 'Bloquear ao sair do app', 'Bloqueia ao trocar de aba, minimizar ou apagar a tela.', toggle('hide', cfg.lockOnHide))
-      + actionRow('recovery', 'shield-check', 'Novo código de recuperação', vault.linked ? 'Gera outro código, válido para todos os apps, e invalida o anterior.' : 'Gera outro código e invalida o anterior.')
+      + (vault.linked ? actionRow('seed-show', 'key', 'Ver minhas 12 palavras', 'Mostra as palavras e o código de 12 caracteres e baixa o PDF. Pede o PIN.')
+        + actionRow('recovery', 'shield-check', 'Gerar novas 12 palavras', 'As atuais deixam de recuperar o PIN. Backups feitos com elas continuam precisando delas.')
+        : actionRow('recovery', 'shield-check', 'Novo código de recuperação', 'Gera outro código e invalida o anterior.'))
       + actionRow('lock', 'lock', 'Bloquear agora', '', 'fs-accent'));
     groups.forEach((g, gi) => { g.current = g.rows() || []; if (g.current.length) html += group(g.title, g.current.map(r => groupRow(gi, r)).join('')); });
     if (installPrompt) html += group('App', actionRow('install', 'download', 'Instalar app', 'Coloca o ' + appName + ' na tela inicial, como um app.'));
@@ -701,6 +790,13 @@
       } else if (kind === 'hide') {
         const next = await vault.setSettings({ lockOnHide: !vault.settings.lockOnHide });
         say(next.lockOnHide ? 'O app vai bloquear ao sair.' : 'Bloqueio ao sair desativado.');
+      } else if (kind === 'seed-show') {
+        const seed = await withPin('Digite seu PIN para ver as 12 palavras:', pin => vault.revealSeed(pin));
+        if (seed && seed.words) await showSeedDialog(seed, 'Suas 12 palavras');
+      } else if (kind === 'recovery' && vault.linked) {
+        if (!await confirmDanger('Gerar novas 12 palavras?', 'As palavras atuais deixam de recuperar o PIN. Os backups já feitos continuam abrindo só com as palavras atuais: guarde o papel antigo junto com eles.', 'Gerar novas')) { el.disabled = false; handling = false; return; }
+        const seed = await withPin('Digite seu PIN para gerar as novas palavras:', pin => vault.rotateRecovery(pin));
+        if (seed && seed.words) { await showSeedDialog(seed, 'Suas novas 12 palavras'); say('Novas 12 palavras ativas.'); }
       } else if (kind === 'recovery') {
         const code = await withPin('Digite seu PIN para gerar um novo código:', pin => vault.rotateRecovery(pin));
         if (typeof code === 'string') { await showCodeDialog(code); say('Novo código de recuperação ativo.'); }
@@ -762,12 +858,44 @@
     },
   };
   window.vaultSettings = () => window.FinancSettings.open();
+  // Backup (contexto '<app>:backup') com as 12 palavras: sem senha, abre com as palavras em qualquer aparelho.
+  // Outros arquivos (certificado, extrato) e apps ainda com PIN próprio: senha longa, como antes.
   window.exportProtected = async (value, context, filename) => {
-    const passphrase = await window.askSecret('Crie uma senha para este arquivo (mínimo de ' + FinancVault.PASSPHRASE_MIN + ' caracteres; pode ser uma frase):', true, true, true);
-    if (!passphrase) return;
-    const payload = await FinancVault.protectPassphrase(value, passphrase, context);
+    let payload;
+    if (/:backup$/.test(context) && vault.hasSeed) payload = await vault.exportBackup(value, context);
+    else {
+      const passphrase = await window.askSecret('Crie uma senha para este arquivo (mínimo de ' + FinancVault.PASSPHRASE_MIN + ' caracteres; pode ser uma frase):', true, true, true);
+      if (!passphrase) return;
+      payload = await FinancVault.protectPassphrase(value, passphrase, context);
+    }
     const url = URL.createObjectURL(new Blob([JSON.stringify(payload)], { type: 'application/json' }));
     const a = document.createElement('a'); a.href = url; a.download = filename; a.click(); URL.revokeObjectURL(url);
+  };
+  // Abre um backup: v2 (12 palavras; deste aparelho direto, de outras palavras pedindo-as) ou v1 (senha).
+  // Devolve os dados, ou null se a pessoa cancelar. Erro com mensagem pronta para mostrar.
+  window.importProtected = async (payload, context) => {
+    if (payload && payload.format === FinancVault.seed.BACKUP_FORMAT) {
+      if (payload.context !== context) throw new Error('Este arquivo não é um backup deste app.');
+      if (vault.hasSeed) {
+        try { return await vault.importBackup(payload, context); }
+        catch (error) { if (error.code !== 'SEED_REQUIRED') throw error; }
+      }
+      let label = 'Este backup foi feito com outras 12 palavras. Digite essas palavras ou o código de 12 caracteres:';
+      for (let tries = 0; tries < 5; tries++) {
+        const text = await askSeed(label);
+        if (!text) return null;
+        try { return await vault.importBackup(payload, context, text); }
+        catch (error) { if (error.code !== 'SEED_INVALID' && error.name !== 'OperationError') throw error; label = error.code === 'SEED_INVALID' ? error.message : 'Essas palavras não abrem este backup. Tente de novo:'; }
+      }
+      return null;
+    }
+    if (payload && payload.format === 'financ-encrypted-v1') {
+      const password = await window.askSecret('Senha do backup (ou o PIN, em arquivos antigos):', false, true);
+      if (!password) return null;
+      try { return await FinancVault.unprotect(payload, password, context); }
+      catch (error) { throw new Error(error.name === 'OperationError' ? 'Senha incorreta.' : 'Este arquivo não é um backup deste app.'); }
+    }
+    throw new Error('Arquivo não é um backup criptografado.');
   };
   // Aceita o certificado FINANC e os exportados pelos apps antes dele (cripito-sim, gerenc-fin).
   const CERT_CONTEXT = /^(financ|[a-z-]+):certificate$/;
