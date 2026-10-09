@@ -182,3 +182,13 @@ html.vault-locked body { min-height:100vh; min-height:100dvh; display:grid; plac
 .app-head h1 { margin:0 0 4px; font:700 26px/1.15 'Space Grotesk', system-ui, sans-serif; letter-spacing:0; color:var(--ink, #eaf0ec); }
 .app-head .lede { margin:0; font:12px/1.5 'IBM Plex Mono', monospace; color:var(--ink-dim, #8fa098); }
 [data-vault-profile-slot]:empty { display:none; }
+
+/* Mostrar ou ocultar senha (botão de olho dentro do campo) */
+.pw-wrap { position:relative; display:block; }
+#vaultGate .pw-wrap, .vault-dialog .pw-wrap { margin:7px 0 0; }
+.pw-wrap > input { width:100%; padding-right:48px !important; }
+#vaultGate .pw-wrap > input, .vault-dialog .pw-wrap > input { margin:0; }
+.pw-wrap > button.pw-toggle { position:absolute; top:50%; right:4px; transform:translateY(-50%); display:grid; place-items:center; width:40px; height:40px; min-height:0; margin:0; padding:0; border:0; border-radius:10px; background:none; box-shadow:none; color:var(--ink-dim, #8fa098); cursor:pointer; -webkit-tap-highlight-color:transparent; }
+.pw-wrap > button.pw-toggle:hover, .pw-wrap > button.pw-toggle[aria-pressed="true"] { color:var(--accent, #6fcf97); }
+.pw-wrap > button.pw-toggle:focus-visible { outline:2px solid var(--accent, #6fcf97); outline-offset:-2px; }
+
