@@ -278,9 +278,12 @@
       setBusy(false); pinInput.focus({ preventScroll: true });
     }
   }
-  const resumed = resumeSession().then(ok => {
+  const resumed = resumeSession().then(async ok => {
     boot.remove();
-    if (ok) finish(); else { dropSession(); panel.style.visibility = ''; }
+    if (!ok) { dropSession(); panel.style.visibility = ''; return ok; }
+    // FINANC ID antigo reaberto pela sessão (sem PIN): ganha as 12 palavras agora e mostra uma vez.
+    let status = {}; try { status = await vault.finishMigration(); } catch (_) {}
+    if (status.seed) { panel.style.visibility = ''; showSeed(status.seed, '', 'migrated'); } else finish();
     return ok;
   });
   Promise.all([bio.available(), resumed]).then(([available, ok]) => {
