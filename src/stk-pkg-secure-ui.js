@@ -784,6 +784,32 @@
       vault.removeItem(key); await vault.flush();
     }
   }
+  // Mostrar ou ocultar a senha: botão de olho em todo campo de senha da página (kit e app), inclusive nos que
+  // aparecem depois (janelas de senha de backup, certificado, extrato). O PIN de 6 caixas fica de fora.
+  function addReveal(input) {
+    if (input.dataset.reveal || input.classList.contains('vault-pin-input') || !input.parentNode) return;
+    input.dataset.reveal = '1';
+    // Visível ou não, o texto não vai para corretor ortográfico nem para sugestões do teclado.
+    input.spellcheck = false; input.setAttribute('autocapitalize', 'none'); input.setAttribute('autocorrect', 'off');
+    const wrap = document.createElement('span'); wrap.className = 'pw-wrap';
+    input.parentNode.insertBefore(wrap, input); wrap.append(input);
+    const button = document.createElement('button'); button.type = 'button'; button.className = 'pw-toggle';
+    const show = visible => {
+      input.type = visible ? 'text' : 'password';
+      button.setAttribute('aria-pressed', String(visible));
+      button.setAttribute('aria-label', visible ? 'Ocultar senha' : 'Mostrar senha'); button.title = button.getAttribute('aria-label');
+      button.innerHTML = icon(visible ? 'eye-off' : 'eye', 18);
+    };
+    button.addEventListener('pointerdown', event => event.preventDefault()); // não tira o foco do campo
+    button.addEventListener('click', () => { show(input.type === 'password'); input.focus({ preventScroll: true }); });
+    // Ao enviar ou limpar o formulário, volta a ocultar: o próximo uso começa escondido.
+    if (input.form) ['submit', 'reset'].forEach(name => input.form.addEventListener(name, () => show(false)));
+    wrap.append(button); show(false);
+  }
+  const revealAll = scope => { if (scope.querySelectorAll) scope.querySelectorAll('input[type="password"]').forEach(addReveal); if (scope.matches && scope.matches('input[type="password"]')) addReveal(scope); };
+  revealAll(document);
+  new MutationObserver(list => list.forEach(m => m.addedNodes.forEach(node => { if (node.nodeType === 1) revealAll(node); })))
+    .observe(document.body, { childList: true, subtree: true });
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
     // Versão nova do app: recarrega para usar os arquivos novos, mas só na tela de PIN parada.
