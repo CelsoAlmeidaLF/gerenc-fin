@@ -941,18 +941,23 @@
       if (!this.current) await vault.saveCertificates([newCert()]);
       return this.current;
     },
-    // Gerar = recriar a partir das 12 palavras (o mesmo certificado em qualquer aparelho). Pede o PIN. null se cancelado.
+    // Confere o PIN; se o PIN único ainda não tem as 12 palavras, cria agora e mostra (uma vez). false se cancelado.
+    async askPin(label) {
+      if (!this.linked) throw new Error('Este app ainda usa um PIN próprio. Em Configurações, toque em "Usar o PIN único" e tente de novo.');
+      let created = null;
+      const ok = await withPin(label, async pin => { if (!vault.identity.hasSeed) created = await vault.revealSeed(pin); else await vault.verifyPin(pin); });
+      if (!ok) return false;
+      if (created) await showSeedDialog(created, 'Suas 12 palavras');
+      return true;
+    },
+    // Gerar = recriar a partir das 12 palavras (o mesmo certificado em qualquer aparelho). Pede só o PIN. null se cancelado.
     async regenerate() {
-      if (!this.fromSeed) { const cert = newCert(); await this.add(cert); return cert; }
-      const ok = await withPin('Digite o PIN para gerar o certificado a partir das 12 palavras:', pin => vault.verifyPin(pin));
-      if (!ok) return null;
+      if (!await this.askPin('Digite o PIN para gerar o certificado a partir das 12 palavras:')) return null;
       const cert = await seedCert(); await this.add(cert); return cert;
     },
-    // Exportar: arquivo protegido pelas 12 palavras (abre aqui direto; em outro aparelho, com as palavras). Pede o PIN.
+    // Exportar: arquivo protegido pelas 12 palavras (abre aqui direto; em outro aparelho, com as palavras). Pede só o PIN.
     async export() {
-      if (!this.fromSeed) { const cert = await this.ensure(); await window.exportProtected(cert, 'financ:certificate', 'financ-' + cert.id + '.cert.secure.json'); return true; }
-      const ok = await withPin('Digite o PIN para exportar o certificado:', pin => vault.verifyPin(pin));
-      if (!ok) return false;
+      if (!await this.askPin('Digite o PIN para baixar o certificado:')) return false;
       const cert = await this.ensure();
       const payload = await vault.exportBackup(cert, 'financ:certificate');
       const url = URL.createObjectURL(new Blob([JSON.stringify(payload)], { type: 'application/json' }));
@@ -999,13 +1004,30 @@
   new MutationObserver(list => list.forEach(m => m.addedNodes.forEach(node => { if (node.nodeType === 1) revealAll(node); })))
     .observe(document.body, { childList: true, subtree: true });
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(reg => reg.update()).catch(() => {});
-    // Versão nova do app: recarrega para usar os arquivos novos, mas só na tela de PIN parada.
-    // Nunca na primeira instalação (não há versão antiga) nem com PIN sendo digitado ou verificado.
-    const hadController = Boolean(navigator.serviceWorker.controller);
+    const registration = navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' });
+    registration.then(reg => reg.update()).catch(() => {});
+    // No celular o app fica aberto em segundo plano: ao voltar para ele, procura versão nova.
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') registration.then(reg => reg.update()).catch(() => {}); });
+    // Versão nova do app: recarrega para usar os arquivos novos. Na tela de PIN, só parada; com o app aberto, quando
+    // não há gravação pendente nem janela aberta (a sessão da aba reabre sem pedir o PIN). Senão, tenta de novo depois.
+    // Só quando chega uma versão nova com outra já controlando a página; nunca na primeira instalação.
+    let updating = false;
+    registration.then(reg => reg.addEventListener('updatefound', () => { if (navigator.serviceWorker.controller) updating = true; })).catch(() => {});
+    const safeToReload = () => {
+      if (locking) return false;
+      if (!vault.key) return !busy && !pinInput.value && document.activeElement !== get('vaultRecovery') && !document.querySelector('.vault-seed');
+      if (vault.dirty || vault.pending || document.querySelector('dialog[open]')) return false;
+      const field = document.activeElement;
+      return !(field && (field.tagName === 'INPUT' || field.tagName === 'TEXTAREA' || field.tagName === 'SELECT'));
+    };
     navigator.serviceWorker.addEventListener('controllerchange', () => {
-      if (!hadController || vault.key || locking || busy || pinInput.value || document.activeElement === get('vaultRecovery')) return;
-      location.reload();
+      if (!updating) return;
+      const tryReload = () => {
+        if (!safeToReload()) { setTimeout(tryReload, 3000); return; }
+        if (vault.key) { lastActivity = Date.now(); saveSession(); }
+        location.reload();
+      };
+      tryReload();
     });
   }
 })();

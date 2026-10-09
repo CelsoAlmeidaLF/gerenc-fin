@@ -1,4 +1,4 @@
-const CACHE_NAME = 'livro-caixa-v1.17.2';
+const CACHE_NAME = 'livro-caixa-v1.17.3';
 const APP_SHELL = [
   './index.html',
   './index.css',
@@ -56,7 +56,7 @@ self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET' || new URL(event.request.url).origin !== self.location.origin) return;
   // Rede primeiro: atualizações valem na hora; o cache só entra quando estiver offline.
   event.respondWith(
-    fetch(event.request).then((response) => {
+    fetch(event.request, { cache: 'no-cache' }).then((response) => {
       if (response && response.status === 200 && event.request.method === 'GET') {
         const clone = response.clone();
         caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
