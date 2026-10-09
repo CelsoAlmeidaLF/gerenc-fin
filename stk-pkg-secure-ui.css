@@ -43,6 +43,8 @@ html.vault-locked body { min-height:100vh; min-height:100dvh; display:grid; plac
 .vault-field { display:block; margin:0 0 16px; text-align:left; color:var(--ink-dim, #8fa098); font:11px/1.4 'IBM Plex Mono', monospace; }
 #vaultGate input:not(.vault-pin-input), .vault-dialog input { display:block; box-sizing:border-box; width:100%; padding:12px 14px; margin:7px 0 0; color:var(--ink, #eaf0ec); background:var(--surface-2, #202824); border:1px solid var(--line, #2c3733); border-radius:10px; outline:none; font:14px 'IBM Plex Mono', monospace; }
 #vaultGate input:not(.vault-pin-input):focus, .vault-dialog input:focus { border-color:var(--accent, #6fcf97); box-shadow:0 0 0 3px color-mix(in srgb, var(--accent, #6fcf97) 18%, transparent); }
+/* PIN em campo de texto (não de senha, para o Google e o Proton Pass não oferecerem nem salvarem), mascarado. */
+.vault-masked { -webkit-text-security:disc; text-security:disc; }
 .vault-pin { text-align:center; font-size:22px !important; letter-spacing:.35em; }
 
 /* Botões */
