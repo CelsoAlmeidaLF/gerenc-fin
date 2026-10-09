@@ -199,7 +199,7 @@
   }
   function refreshBiometric() {
     const key = panel.querySelector('.vault-key-bio');
-    if (!key) return;
+    if (!key || !panel.isConnected) return; // app já aberto (o painel saiu da página) antes de a biometria responder
     const show = step === 'unlock' && bioAvailable && Boolean(vault.biometric);
     key.classList.toggle('is-off', !show);
     key.tabIndex = show ? 0 : -1;
