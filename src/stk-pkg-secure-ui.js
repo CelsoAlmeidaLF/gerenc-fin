@@ -865,7 +865,7 @@
   // Outros arquivos (certificado, extrato) e apps ainda com PIN próprio: senha longa, como antes.
   window.exportProtected = async (value, context, filename) => {
     let payload;
-    if (/:backup$/.test(context) && vault.hasSeed) payload = await vault.exportBackup(value, context);
+    if ((/:backup$/.test(context) || context === 'financ:certificate') && vault.hasSeed) payload = await vault.exportBackup(value, context);
     else {
       const passphrase = await window.askSecret('Crie uma senha para este arquivo (mínimo de ' + FinancVault.PASSPHRASE_MIN + ' caracteres; pode ser uma frase):', true, true, true);
       if (!passphrase) return;
@@ -903,6 +903,13 @@
   // Aceita o certificado FINANC e os exportados pelos apps antes dele (cripito-sim, gerenc-fin).
   const CERT_CONTEXT = /^(financ|[a-z-]+):certificate$/;
   window.importCertificate = async (payload, context) => {
+    // Certificado das 12 palavras: abre com as palavras deste aparelho (ou pede as do arquivo), sem senha.
+    if (payload && payload.format === FinancVault.seed.BACKUP_FORMAT) {
+      const cert = await window.importProtected(payload, 'financ:certificate');
+      if (!cert) throw new Error('Importação cancelada.');
+      if (!FinancVault.certOK(cert)) throw new Error('Certificado inválido.');
+      return cert;
+    }
     if (payload && payload.format === 'financ-encrypted-v1') {
       if (!CERT_CONTEXT.test(payload.context || '') && payload.context !== context) throw new Error('Certificado inválido.');
       const pin = await window.askSecret('Senha do certificado (ou o PIN, em arquivos antigos):', false, true);
@@ -917,8 +924,11 @@
   const CERT_KEYS = { 'cripito-sim': 'cripto-app-device-cert', 'gerenc-fin': 'livro_caixa_device_cert_v1' };
   const randomB64 = size => btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(size))));
   const newCert = () => ({ version: 1, id: 'cert-' + randomB64(12).replace(/[^a-zA-Z0-9]/g, '').slice(0, 16), secret: randomB64(32), createdAt: new Date().toISOString() });
+  // Com as 12 palavras, o certificado sai do hash delas: gerar e exportar pedem só o PIN, nunca senha.
+  const seedCert = async () => FinancVault.seed.certFromRoot(await vault.rootBytes());
   window.FinancCert = {
     get linked() { return Boolean(vault.key && vault.linked); },
+    get fromSeed() { return Boolean(vault.key && vault.hasSeed); },
     get current() { return vault.certificates[0] || null; },
     find(id) { return vault.certificates.find(c => c.id === id) || null; },
     async add(cert, makeCurrent = true) {
@@ -926,9 +936,30 @@
       const others = vault.certificates.filter(c => c.id !== cert.id);
       await vault.saveCertificates(makeCurrent ? [cert, ...others] : [...others, cert]);
     },
-    async ensure() { if (!this.current) await vault.saveCertificates([newCert()]); return this.current; },
-    async regenerate() { const cert = newCert(); await this.add(cert); return cert; },
-    async export() { const cert = await this.ensure(); await window.exportProtected(cert, 'financ:certificate', 'financ-' + cert.id + '.cert.secure.json'); },
+    async ensure() {
+      if (this.fromSeed) { const cert = await seedCert(); if (!this.current || this.current.id !== cert.id) await this.add(cert); return this.current; }
+      if (!this.current) await vault.saveCertificates([newCert()]);
+      return this.current;
+    },
+    // Gerar = recriar a partir das 12 palavras (o mesmo certificado em qualquer aparelho). Pede o PIN. null se cancelado.
+    async regenerate() {
+      if (!this.fromSeed) { const cert = newCert(); await this.add(cert); return cert; }
+      const ok = await withPin('Digite o PIN para gerar o certificado a partir das 12 palavras:', pin => vault.verifyPin(pin));
+      if (!ok) return null;
+      const cert = await seedCert(); await this.add(cert); return cert;
+    },
+    // Exportar: arquivo protegido pelas 12 palavras (abre aqui direto; em outro aparelho, com as palavras). Pede o PIN.
+    async export() {
+      if (!this.fromSeed) { const cert = await this.ensure(); await window.exportProtected(cert, 'financ:certificate', 'financ-' + cert.id + '.cert.secure.json'); return true; }
+      const ok = await withPin('Digite o PIN para exportar o certificado:', pin => vault.verifyPin(pin));
+      if (!ok) return false;
+      const cert = await this.ensure();
+      const payload = await vault.exportBackup(cert, 'financ:certificate');
+      const url = URL.createObjectURL(new Blob([JSON.stringify(payload)], { type: 'application/json' }));
+      const a = document.createElement('a'); a.href = url; a.download = 'financ-' + cert.id + '.cert.json'; document.body.append(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      return true;
+    },
     async importFile(payload) { const cert = await window.importCertificate(payload, 'financ:certificate'); await this.add(cert); return cert; },
   };
   // Certificado próprio de versões antigas do app: entra no FINANC (vira o atual só se ainda não houver um) e sai do cofre do app.

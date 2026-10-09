@@ -456,7 +456,7 @@
   FinancSettings.addSection({ title: 'Dados e backup', rows: [
     { icon: 'download', label: 'Exportar backup (JSON)', description: 'Protegido pelas suas 12 palavras: abre em qualquer aparelho com elas.', onClick: clickById('btnExport') },
     { icon: 'upload', label: 'Importar backup (JSON)', description: 'Restaura um backup exportado.', onClick: clickById('btnImport') },
-    { icon: 'shield', label: 'Exportar certificado', description: 'Cópia protegida; o mesmo certificado em todos os apps.', onClick: clickById('btnExportCert') },
+    { icon: 'shield', label: 'Exportar certificado', description: 'Sai das 12 palavras; pede só o PIN.', onClick: clickById('btnExportCert') },
     { icon: 'shield-check', label: 'Importar certificado', description: 'Usa o certificado de outro aparelho.', onClick: clickById('btnImportCert') },
     { icon: 'trash', label: 'Limpar lançamentos', description: 'Apaga despesas, entradas, cartão e dívidas.', danger: true, onClick: clickById('btnReset') },
   ] });
@@ -703,7 +703,7 @@
     },
     btnExportCert_click: async function() {
       try { if (FinancCert.linked) await FinancCert.export(); else { const cert=getDeviceCert(); await window.exportProtected(cert, 'gerenc-fin:certificate', 'gerenc-fin-'+cert.id+'.cert.secure.json'); } }
-      catch (_) { showMessage('Exportação falhou', 'Não foi possível exportar o certificado protegido.'); }
+      catch (err) { showMessage('Exportação falhou', (err && err.message) || 'Não foi possível exportar o certificado protegido.'); }
     },
     btnImportCert_click: function() { document.getElementById('importCertFile').click(); },
     importCertFile_change: function(e) {
