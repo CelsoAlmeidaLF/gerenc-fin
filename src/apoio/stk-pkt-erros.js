@@ -1,8 +1,8 @@
 /*!
- * stk-pkg-erros.js — log de erros dos apps Systekna
+ * stk-pkt-erros.js — log de erros dos apps Systekna
  *
  * Uso (no <head> de cada app, antes dos outros scripts, para pegar erros desde o início):
- *   <script src="apoio/stk-pkg-erros.js" data-app="CRIPTO"></script>
+ *   <script src="apoio/stk-pkt-erros.js" data-app="CRIPTO"></script>
  *
  * O que faz:
  *   1. Captura erros não tratados (window.onerror, unhandledrejection) e console.error.
@@ -11,7 +11,7 @@
  *   4. Envia ao painel de feedback (coleção "erros") só com permissão:
  *      - "Modo testador" ligado (vale para todos os apps do aparelho) → envia sozinho;
  *      - desligado → aviso discreto "Enviar relatório?", uma vez por sessão.
- *   Nenhum dado financeiro sai do aparelho. O envio usa window.Feedback.relatarErro (stk-pkg-feedback.js).
+ *   Nenhum dado financeiro sai do aparelho. O envio usa window.Feedback.relatarErro (stk-pkt-feedback.js).
  *
  * Em Configurações (FinancSettings) aparece a seção "Relatórios de erro".
  * As funções puras (limpar, assinatura, navegador, podeEnviar) são exportadas para os testes no Node.

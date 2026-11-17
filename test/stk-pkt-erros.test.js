@@ -4,7 +4,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const fs = require('node:fs');
-const local = [path.join(__dirname, '../shared/stk-pkg-erros.js'), path.join(__dirname, '../src/apoio/stk-pkg-erros.js')].find((p) => fs.existsSync(p));
+const local = [path.join(__dirname, '../shared/stk-pkt-erros.js'), path.join(__dirname, '../src/apoio/stk-pkt-erros.js')].find((p) => fs.existsSync(p));
 const E = require(local);
 
 const UA_ANDROID = 'Mozilla/5.0 (Linux; Android 14; SM-A546E) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Mobile Safari/537.36';
