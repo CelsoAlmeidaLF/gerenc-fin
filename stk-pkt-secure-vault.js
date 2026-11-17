@@ -70,7 +70,7 @@
   // 12 palavras (BIP39, lista em português) → hash de 12 caracteres → raiz.
   // As palavras são só a forma de escrever o hash; o hash sozinho abre tudo (recuperar o PIN, certificado, backups).
   // A raiz vem do hash por derivação lenta (PBKDF2, 600 mil): tentar hashes no arquivo de backup fica inviável.
-  const wordlist = () => root.FINANC_BIP39_PT || (typeof require === 'function' ? require('./stk-pkg-bip39-pt.js') : null);
+  const wordlist = () => root.FINANC_BIP39_PT || (typeof require === 'function' ? require('./stk-pkt-bip39-pt.js') : null);
   const HASH_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'; // Crockford: sem I, L, O, U (não confunde com 1 e 0)
   const sha256 = async bytes => new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
   const bitsOf = bytes => Array.from(bytes, b => b.toString(2).padStart(8, '0')).join('');
