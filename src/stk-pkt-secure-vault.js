@@ -56,13 +56,48 @@
   }
   // Preferências cifradas e autenticadas com a chave de dados (só existem com o cofre aberto); só valores da lista são aceitos.
   const AUTO_LOCK_MINUTES = [1, 5, 15, 30];
-  const DEFAULT_SETTINGS = Object.freeze({ autoLockMinutes: 5, lockOnHide: false });
+  // Lembrete de backup (dias; 0 = desligado). backupAt/firstUseAt/snoozeUntil são datas (ms); changed = houve mudança
+  // nos dados desde o último backup. Tudo cifrado junto com as preferências.
+  const BACKUP_DAYS = [0, 7, 15, 30];
+  const DAY_MS = 86400000;
+  const DEFAULT_SETTINGS = Object.freeze({ autoLockMinutes: 5, lockOnHide: false, backupDays: 15, backupAt: 0, changed: false, snoozeUntil: 0, firstUseAt: 0 });
+  const stamp = v => Number.isFinite(v) && v > 0 ? Math.floor(v) : 0;
   function cleanSettings(raw) {
     const s = raw && typeof raw === 'object' ? raw : {};
     return {
       autoLockMinutes: AUTO_LOCK_MINUTES.includes(s.autoLockMinutes) ? s.autoLockMinutes : DEFAULT_SETTINGS.autoLockMinutes,
       lockOnHide: s.lockOnHide === true,
+      backupDays: BACKUP_DAYS.includes(s.backupDays) ? s.backupDays : DEFAULT_SETTINGS.backupDays,
+      backupAt: stamp(s.backupAt), changed: s.changed === true, snoozeUntil: stamp(s.snoozeUntil), firstUseAt: stamp(s.firstUseAt),
     };
+  }
+  // Contexto de cada parte do cofre de um app (o do próprio app e o dos outros, no backup de todos os apps).
+  const ctxFor = (appId, part) => appId + ':vault-v1:' + part;
+  const VAULT_PREFIX = 'financ-vault-v1:';
+  const COPY_FORMAT = 'financ-vault-copy-v1', ALL_FORMAT = 'financ-all-apps-v1', ALL_CONTEXT = 'financ:all-apps';
+  // Apps cujos dados ficam fora do cofre do kit (OPFS, Firestore): têm backup próprio e ficam fora das cópias do kit.
+  const OUTSIDE_DATA = Object.freeze(['multi-cm', 'governanca-systekna']);
+  const valuesOK = v => v && typeof v === 'object' && !Array.isArray(v) && Object.values(v).every(x => typeof x === 'string');
+
+  // Tentativas de PIN: o contador fica gravado (não zera ao recarregar a página) e vale para todos os apps do aparelho,
+  // porque o PIN é um só. Espera crescente e, na 10ª falha, o PIN deixa de abrir: só a biometria ou as 12 palavras.
+  const GUARD_KEY = 'financ-pin-guard-v1';
+  const GUARD_WAIT_S = [0, 0, 0, 30, 60, 300, 900, 3600, 14400];
+  const GUARD_LOCK = 10;
+  class PinGuard {
+    constructor(storage, now = () => Date.now()) { this.storage = storage; this.now = now; }
+    read() {
+      try { const r = JSON.parse(this.storage.getItem(GUARD_KEY)); if (r && Number.isInteger(r.fails) && r.fails >= 0) return { fails: r.fails, until: stamp(r.until) }; } catch (_) {}
+      return { fails: 0, until: 0 };
+    }
+    state() { const r = this.read(); return { fails: r.fails, waitMs: Math.max(0, r.until - this.now()), locked: r.fails >= GUARD_LOCK, left: Math.max(0, GUARD_LOCK - r.fails) }; }
+    fail() {
+      const fails = this.read().fails + 1;
+      const wait = fails >= GUARD_LOCK ? 0 : GUARD_WAIT_S[Math.min(fails, GUARD_WAIT_S.length) - 1];
+      try { this.storage.setItem(GUARD_KEY, JSON.stringify({ fails, until: this.now() + wait * 1000 })); } catch (_) {}
+      return this.state();
+    }
+    reset() { try { this.storage.removeItem(GUARD_KEY); } catch (_) {} }
   }
   function recoveryCode() { return Array.from(random(32), n => n.toString(16).padStart(2, '0')).join('').match(/.{8}/g).join('-'); }
   const importAes = raw => crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt', 'decrypt']);
@@ -252,8 +287,12 @@
   }
 
   class Vault {
-    constructor(storage, appId, onError = () => {}) {
-      this.storage = storage; this.appId = appId; this.storageKey = 'financ-vault-v1:' + appId;
+    // options.dataStore: { get(appId), put(appId, { rev, payload }), delete(appId) } (assíncrono, ex.: IndexedDB). Com ele,
+    // os dados cifrados saem do localStorage (limite de ~5 MB dividido entre os apps) e ficam no IndexedDB; o envelope
+    // (pequeno) continua no localStorage. Sem ele, tudo no localStorage, como antes.
+    constructor(storage, appId, onError = () => {}, options = {}) {
+      this.dataStore = options.dataStore || null; this.rev = null; this.prefsDirty = false; this.payloadSize = 0;
+      this.storage = storage; this.appId = appId; this.storageKey = VAULT_PREFIX + appId;
       this.onError = onError; this.key = null; this.values = null; this.envelope = null;
       this.pending = null; this.dirty = false; this.lastStored = null; this.closing = false; this.prefs = null;
       this.sessionKey = null; this.session = null; this.onStored = () => {};
@@ -373,6 +412,7 @@
       const next = { version: 1, appId: this.appId, identity: await seal(appRaw, this.masterKey, this.context('identity')) };
       if (this.envelope.settings) next.settings = this.envelope.settings;
       if (this.envelope.payload) next.payload = this.envelope.payload;
+      if (this.envelope.store === 'idb') { next.store = 'idb'; next.rev = this.envelope.rev; }
       this.envelope = next;
       this.rawForLink = null;
       await this.sealSession(appRaw, master);
@@ -413,11 +453,8 @@
       this.assertOpen();
       if (partial.autoLockMinutes !== undefined && !AUTO_LOCK_MINUTES.includes(partial.autoLockMinutes)) throw new Error('Tempo de bloqueio inválido.');
       if (partial.lockOnHide !== undefined && typeof partial.lockOnHide !== 'boolean') throw new Error('Valor inválido para bloquear ao sair.');
-      const next = cleanSettings({ ...this.settings, ...partial });
-      this.envelope.settings = await seal(next, this.key, this.context('settings'));
-      this.prefs = next;
-      this.dirty = true; await this.flush();
-      return next;
+      if (partial.backupDays !== undefined && !BACKUP_DAYS.includes(partial.backupDays)) throw new Error('Prazo inválido.');
+      return this.updatePrefs(partial);
     }
     async changePin(currentPin, newPin) {
       this.assertOpen();
@@ -458,7 +495,8 @@
       await this.verifyPin(pin);
       if (this.pending) await this.pending.catch(() => {});
       this.storage.removeItem(this.storageKey);
-      this.forget(); this.lastStored = null; this.dirty = false;
+      if (this.dataStore) { try { await this.dataStore.delete(this.appId); } catch (_) {} }
+      this.forget(); this.lastStored = null; this.dirty = false; this.prefsDirty = false; this.rev = null;
     }
     async disableBiometric() {
       this.assertOpen();
@@ -470,18 +508,148 @@
       const rawKey = unb64(rawB64);
       try {
         const key = await importAes(rawKey);
-        const values = envelope.payload ? await open(envelope.payload, key, this.context('data')) : {};
-        if (!values || typeof values !== 'object' || Array.isArray(values) || Object.values(values).some(v => typeof v !== 'string')) throw new Error('Dados inválidos.');
+        const { values, rev, size } = await this.readValues(this.appId, envelope, key);
+        if (!valuesOK(values)) throw new Error('Dados inválidos.');
         // Preferência adulterada ou ilegível volta ao padrão (5 min, sem bloqueio ao sair).
         let prefs = { ...DEFAULT_SETTINGS };
         if (envelope.settings) { try { prefs = cleanSettings(await open(envelope.settings, key, this.context('settings'))); } catch (_) {} }
-        this.prefs = prefs;
+        this.prefs = prefs; this.prefsDirty = false;
         this.key = key; this.values = Object.assign(Object.create(null), values); this.envelope = envelope;
-        this.lastStored = stored; this.closing = false;
+        this.lastStored = stored; this.closing = false; this.rev = rev; this.payloadSize = size;
+        // Primeiro uso registrado (base do lembrete de backup) e dados ainda no localStorage: grava no próximo flush.
+        if (!prefs.firstUseAt) { this.prefs = { ...prefs, firstUseAt: Date.now() }; this.prefsDirty = true; this.dirty = true; }
+        if (this.dataStore && envelope.store !== 'idb') this.dirty = true;
         this.rawForLink = envelope.identity ? null : rawB64;
         await this.sealSession(rawB64, master);
       } finally { rawKey.fill(0); }
     }
+    // Dados de um app: no IndexedDB (envelope.store === 'idb', revisão ligada à cifra) ou dentro do envelope (formato antigo).
+    // A revisão do IndexedDB pode estar 1 à frente do envelope (gravou os dados e caiu antes de gravar o envelope): vale a do IndexedDB.
+    async readValues(appId, envelope, key) {
+      if (envelope.store === 'idb') {
+        const missing = () => Object.assign(new Error('Os dados deste app não foram encontrados neste navegador. Restaure uma cópia de segurança.'), { code: 'DATA_MISSING' });
+        if (!this.dataStore) throw missing();
+        const rec = await this.dataStore.get(appId);
+        if (!rec || !Number.isInteger(rec.rev) || (rec.rev !== envelope.rev && rec.rev !== envelope.rev + 1)) throw missing();
+        return { values: await open(rec.payload, key, ctxFor(appId, 'data:' + rec.rev)), rev: rec.rev, size: JSON.stringify(rec.payload).length };
+      }
+      return { values: envelope.payload ? await open(envelope.payload, key, ctxFor(appId, 'data')) : {}, rev: null, size: envelope.payload ? JSON.stringify(envelope.payload).length : 0 };
+    }
+    // Grava os dados de um app (este ou outro, no restaurar de todos os apps) e devolve o envelope novo.
+    async writeValues(appId, envelope, key, values, rev) {
+      const next = { ...envelope };
+      if (this.dataStore) {
+        try {
+          const nextRev = (Number.isInteger(rev) ? rev : 0) + 1;
+          const payload = await seal(values, key, ctxFor(appId, 'data:' + nextRev));
+          await this.dataStore.put(appId, { rev: nextRev, payload });
+          const back = await this.dataStore.get(appId);
+          if (!back || back.rev !== nextRev || !back.payload || back.payload.ciphertext !== payload.ciphertext) throw new Error('Falha ao confirmar a gravação.');
+          delete next.payload; next.store = 'idb'; next.rev = nextRev;
+          return { envelope: next, rev: nextRev, size: JSON.stringify(payload).length };
+        } catch (error) {
+          // IndexedDB indisponível (navegador privado, bloqueio): enquanto os dados ainda estão no localStorage, continua lá.
+          if (envelope.store === 'idb') throw error;
+          this.dataStore = null;
+        }
+      }
+      const payload = await seal(values, key, ctxFor(appId, 'data'));
+      next.payload = payload; delete next.store; delete next.rev;
+      return { envelope: next, rev: null, size: JSON.stringify(payload).length };
+    }
+    // ---------- backup: lembrete, cópia deste app e de todos os apps ----------
+    // Situação do backup: due = hora de lembrar (lembrete ligado, houve mudança, prazo vencido desde o último backup ou
+    // desde o primeiro uso, e não adiado).
+    backupStatus(now = Date.now()) {
+      const p = this.settings, base = p.backupAt || p.firstUseAt || now;
+      const due = !OUTSIDE_DATA.includes(this.appId) && p.backupDays > 0 && p.changed && now - base >= p.backupDays * DAY_MS && now >= p.snoozeUntil;
+      return { backupAt: p.backupAt || null, days: p.backupDays, changed: p.changed, due, ageDays: p.backupAt ? Math.floor((now - p.backupAt) / DAY_MS) : null };
+    }
+    async updatePrefs(change) {
+      this.assertOpen();
+      this.prefs = cleanSettings({ ...this.settings, ...change });
+      this.prefsDirty = true; this.dirty = true; await this.flush();
+      return this.settings;
+    }
+    markBackup(now = Date.now()) { return this.updatePrefs({ backupAt: now, changed: false, snoozeUntil: 0 }); }
+    snoozeBackup(days = 3, now = Date.now()) { return this.updatePrefs({ snoozeUntil: now + days * DAY_MS }); }
+    async setBackupDays(days) { if (!BACKUP_DAYS.includes(days)) throw new Error('Prazo inválido.'); return this.updatePrefs({ backupDays: days }); }
+    // Cópia completa deste app (todos os valores do cofre), cifrada pelas 12 palavras, como o backup v2.
+    async exportCopy(now = Date.now()) {
+      this.assertOpen();
+      if (OUTSIDE_DATA.includes(this.appId)) throw new Error('Os dados deste app têm backup próprio.');
+      return sealBackup({ format: COPY_FORMAT, appId: this.appId, at: now, values: { ...this.values } }, this.appId + ':vault-copy', await this.rootBytes());
+    }
+    // Abre (sem aplicar) uma cópia deste app ou de todos os apps. secretText: 12 palavras de outro aparelho.
+    async openCopy(payload, secretText) {
+      this.assertOpen();
+      if (!payload || payload.format !== BACKUP_FORMAT) throw new Error('Este arquivo não é uma cópia de segurança.');
+      const all = payload.context === ALL_CONTEXT;
+      if (!all && payload.context !== this.appId + ':vault-copy') throw new Error('Esta cópia é de outro app.');
+      const copy = await this.importBackup(payload, payload.context, secretText);
+      if (all ? !(copy && copy.format === ALL_FORMAT && copy.apps && typeof copy.apps === 'object' && Object.values(copy.apps).every(valuesOK))
+        : !(copy && copy.format === COPY_FORMAT && copy.appId === this.appId && valuesOK(copy.values))) throw new Error('Cópia de segurança inválida.');
+      return copy;
+    }
+    // Troca os dados deste app pelos de uma cópia (já aberta por openCopy).
+    async restoreValues(values) {
+      this.assertOpen();
+      if (!valuesOK(values)) throw new Error('Dados inválidos.');
+      this.values = Object.assign(Object.create(null), values);
+      this.prefs = { ...this.settings, changed: false }; this.prefsDirty = true;
+      this.dirty = true; await this.flush();
+    }
+    // Apps do aparelho com cofre (mesmo endereço).
+    appIds() { return Array.from({ length: this.storage.length }, (_, i) => this.storage.key(i)).filter(k => k && k.startsWith(VAULT_PREFIX)).map(k => k.slice(VAULT_PREFIX.length)).sort(); }
+    async otherKey(appId, envelope) {
+      const raw = unb64(await open(envelope.identity, this.masterKey, ctxFor(appId, 'identity')));
+      try { return { key: await importAes(raw) }; } finally { raw.fill(0); }
+    }
+    // Cópia de todos os apps ligados ao PIN único (para mudar de celular). Apps ainda com PIN próprio ficam de fora.
+    async exportAll(now = Date.now()) {
+      this.assertOpen();
+      if (!this.masterKey) throw new Error('Ligue este app ao PIN único para copiar todos os apps.');
+      await this.flush();
+      const apps = {}, skipped = [];
+      for (const appId of this.appIds()) {
+        if (OUTSIDE_DATA.includes(appId)) continue;
+        if (appId === this.appId) { apps[appId] = { ...this.values }; continue; }
+        try {
+          const envelope = JSON.parse(this.storage.getItem(VAULT_PREFIX + appId));
+          if (!envelope || !envelope.identity) { skipped.push(appId); continue; }
+          const { key } = await this.otherKey(appId, envelope);
+          apps[appId] = (await this.readValues(appId, envelope, key)).values;
+        } catch (_) { skipped.push(appId); }
+      }
+      return { payload: await sealBackup({ format: ALL_FORMAT, at: now, apps }, ALL_CONTEXT, await this.rootBytes()), apps: Object.keys(apps), skipped };
+    }
+    // Restaura todos os apps de uma cópia (já aberta por openCopy). Apps que ainda não existem aqui ganham cofre novo
+    // ligado ao PIN único; os outros mantêm as preferências. Devolve a lista de apps restaurados.
+    async restoreAll(copy) {
+      this.assertOpen();
+      if (!this.masterKey) throw new Error('Ligue este app ao PIN único para restaurar todos os apps.');
+      if (!copy || copy.format !== ALL_FORMAT) throw new Error('Cópia de segurança inválida.');
+      const done = [];
+      for (const [appId, values] of Object.entries(copy.apps)) {
+        if (!/^[a-z0-9-]{1,40}$/.test(appId) || !valuesOK(values) || OUTSIDE_DATA.includes(appId)) continue;
+        if (appId === this.appId) { await this.restoreValues(values); done.push(appId); continue; }
+        const storageKey = VAULT_PREFIX + appId, stored = this.storage.getItem(storageKey);
+        let envelope = stored ? JSON.parse(stored) : null, key, rev = null;
+        if (envelope && envelope.identity) { ({ key } = await this.otherKey(appId, envelope)); rev = Number.isInteger(envelope.rev) ? envelope.rev : null; }
+        else if (!envelope) {
+          const raw = random(32);
+          try { key = await importAes(raw); envelope = { version: 1, appId, identity: await seal(b64(raw), this.masterKey, ctxFor(appId, 'identity')) }; } finally { raw.fill(0); }
+        } else continue; // app com PIN próprio: não dá para abrir sem o PIN dele
+        if (envelope.store === 'idb' && this.dataStore) { const rec = await this.dataStore.get(appId); if (rec && Number.isInteger(rec.rev)) rev = Math.max(rev || 0, rec.rev); }
+        const written = await this.writeValues(appId, envelope, key, values, rev);
+        const next = JSON.stringify(written.envelope);
+        this.storage.setItem(storageKey, next);
+        if (this.storage.getItem(storageKey) !== next) throw new Error('Falha ao gravar ' + appId + '.');
+        done.push(appId);
+      }
+      return done;
+    }
+    get usage() { return { appBytes: this.payloadSize + (this.lastStored ? this.lastStored.length : 0), inIndexedDB: Boolean(this.envelope && this.envelope.store === 'idb') }; }
     // Sessão da aba: as chaves brutas são cifradas por uma chave de sessão não-exportável (fornecida pela interface),
     // para reabrir o cofre ao recarregar a página sem pedir o PIN. Só o blob cifrado sai daqui.
     async sealSession(rawB64, master = null) {
@@ -579,32 +747,41 @@
     removeItem(name) { this.assertOpen(); delete this.values[name]; this.changed(); }
     keyAt(index) { this.assertOpen(); return Object.keys(this.values)[index] ?? null; }
     get length() { this.assertOpen(); return Object.keys(this.values).length; }
-    changed() { this.dirty = true; this.flush().catch(error => this.onError(error)); }
+    changed() {
+      if (this.prefs && !this.prefs.changed) { this.prefs = { ...this.prefs, changed: true }; this.prefsDirty = true; }
+      this.dirty = true; this.flush().catch(error => this.onError(error));
+    }
     async flush() {
       if (this.pending) { await this.pending; if (this.dirty) return this.flush(); return; }
-      if (!this.key || !this.dirty) return;
+      if (!this.key || !(this.dirty || this.prefsDirty)) return;
       this.pending = (async () => {
         while (this.dirty) {
           this.dirty = false;
+          const prefsWere = this.prefsDirty;
           try {
-            const payload = await seal(this.values, this.key, this.context('data'));
             if (this.storage.getItem(this.storageKey) !== this.lastStored) throw new Error('O cofre mudou em outra aba. Reabra o aplicativo.');
-            const next = JSON.stringify({ ...this.envelope, payload });
+            const base = { ...this.envelope };
+            if (this.prefsDirty) { base.settings = await seal(this.settings, this.key, this.context('settings')); this.prefsDirty = false; }
+            const written = await this.writeValues(this.appId, base, this.key, this.values, this.rev);
+            const next = JSON.stringify(written.envelope);
             this.storage.setItem(this.storageKey, next);
             if (this.storage.getItem(this.storageKey) !== next) throw new Error('Falha ao confirmar a gravação.');
-            this.lastStored = next; this.envelope.payload = payload;
+            this.lastStored = next; this.envelope = written.envelope; this.rev = written.rev; this.payloadSize = written.size;
             try { this.onStored(); } catch (_) {}
-          } catch (error) { this.dirty = true; throw error; }
+          } catch (error) { this.dirty = true; if (prefsWere) this.prefsDirty = true; throw error; }
         }
       })();
       try { await this.pending; } finally { this.pending = null; }
     }
+    // Apaga as chaves soltas de versões muito antigas, só quando iguais ao que já está gravado no cofre.
+    // Com gravação pendente, não faz nada agora (devolve false) e a interface chama de novo depois do flush.
     cleanupLegacy(matches) {
       this.assertOpen();
-      // Only remove originals identical to the successfully encrypted snapshot.
-      if (this.dirty || this.pending || !this.lastStored) throw new Error('Migração ainda não salva.');
-      const keys = Array.from({ length: this.storage.length }, (_, i) => this.storage.key(i));
-      for (const key of keys) if (matches(key) && this.storage.getItem(key) === this.getItem(key)) this.storage.removeItem(key);
+      const keys = Array.from({ length: this.storage.length }, (_, i) => this.storage.key(i)).filter(k => k && matches(k));
+      if (!keys.length) return true;
+      if (this.dirty || this.pending || !this.lastStored) return false;
+      for (const key of keys) if (this.storage.getItem(key) === this.getItem(key)) this.storage.removeItem(key);
+      return true;
     }
     forget() { this.key = null; this.values = null; this.envelope = null; this.prefs = null; this.session = null; this.closing = false; this.masterKey = null; this.certs = null; this.rawForLink = null; if (this.root) this.root.fill(0); this.root = null; this.pendingMaster = null; }
     async lock() { this.closing = true; try { await this.flush(); this.forget(); } catch (error) { this.closing = false; throw error; } }
@@ -658,7 +835,30 @@
       try { PublicKeyCredential.signalUnknownCredential({ rpId: location.hostname, credentialId: b64url(credentialId) }).catch(() => {}); } catch (_) {}
     },
   };
-  const api = { Vault, Identity, protect, protectPassphrase, passphraseOK, PASSPHRASE_MIN, unprotect, pinOK, recoveryCode, webauthn, AUTO_LOCK_MINUTES, certOK, seed };
+  // Dados dos apps no IndexedDB do navegador (um registro por app: { rev, payload } já cifrado).
+  // Versão 2: cria a tabela se faltar (banco criado vazio por outra ferramenta); erro vira rejeição, nunca espera infinita.
+  function idbStore(name = 'financ-data-v1') {
+    const run = (mode, op) => new Promise((resolve, reject) => {
+      const req = indexedDB.open(name, 2);
+      req.onupgradeneeded = () => { if (!req.result.objectStoreNames.contains('apps')) req.result.createObjectStore('apps'); };
+      req.onerror = () => reject(req.error);
+      req.onblocked = () => reject(new Error('Feche as outras abas dos apps para atualizar o armazenamento.'));
+      req.onsuccess = () => {
+        const db = req.result;
+        try {
+          const tx = db.transaction('apps', mode), r = op(tx.objectStore('apps'));
+          tx.oncomplete = () => { db.close(); resolve(r.result); };
+          tx.onerror = tx.onabort = () => { db.close(); reject(tx.error || new Error('Falha no IndexedDB.')); };
+        } catch (error) { db.close(); reject(error); }
+      };
+    });
+    return {
+      get: appId => run('readonly', s => s.get(appId)),
+      put: (appId, rec) => run('readwrite', s => s.put(rec, appId)),
+      delete: appId => run('readwrite', s => s.delete(appId)),
+    };
+  }
+  const api = { Vault, Identity, PinGuard, idbStore, OUTSIDE_DATA, BACKUP_DAYS, COPY_FORMAT, ALL_FORMAT, ALL_CONTEXT, protect, protectPassphrase, passphraseOK, PASSPHRASE_MIN, unprotect, pinOK, recoveryCode, webauthn, AUTO_LOCK_MINUTES, certOK, seed };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.FinancVault = api;
 })(globalThis);

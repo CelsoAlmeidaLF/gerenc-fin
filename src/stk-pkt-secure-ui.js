@@ -65,6 +65,8 @@
     return input;
   }
   const wasTyped = input => input.value === input._typed;
+  // Apps com senhas/PIN próprios (ex.: equipe do BarGestão) usam a mesma proteção nos seus campos.
+  window.FinancTyped = Object.freeze({ only: typedOnly, wasTyped });
   const panel = document.createElement('section'); panel.id = 'vaultGate';
   panel.setAttribute('aria-labelledby', 'vaultTitle');
   panel.innerHTML = '<div class="vault-brand"><img class="vault-logo" alt="" width="40" height="40" hidden><div><div class="vault-app-name"></div><div class="vault-eyebrow">' + icon('shield-check', 12) + 'SEGURANÇA LOCAL</div></div></div>'
@@ -93,9 +95,17 @@
   let resolveReady, locking = false, lastActivity = Date.now(), failedAttempts = 0, blocked = false, busy = false;
   let step = 'unlock', firstPin = '', recoveryInput = '', countdown = null, bioAvailable = false;
   window.vaultReady = new Promise(resolve => { resolveReady = resolve; });
-  const vault = new FinancVault.Vault(nativeStorage, appId, () => {
-    status.textContent = 'Não foi possível salvar as últimas alterações. Mantenha esta página aberta e tente bloquear novamente para salvar.';
-  });
+  // Dados no IndexedDB (sem o limite de ~5 MB do localStorage dividido entre os apps); o envelope fica no localStorage.
+  const vault = new FinancVault.Vault(nativeStorage, appId, error => {
+    const full = error && (error.name === 'QuotaExceededError' || /quota/i.test(error.message || ''));
+    status.textContent = full ? 'Não foi possível salvar: o espaço do navegador acabou. Faça uma cópia de segurança (Configurações → Seus dados) e apague registros antigos.'
+      : 'Não foi possível salvar as últimas alterações. Mantenha esta página aberta e tente bloquear novamente para salvar.';
+  }, { dataStore: window.indexedDB ? FinancVault.idbStore() : null });
+  // Tentativas erradas de PIN: contador gravado (vale ao recarregar e em todos os apps do aparelho).
+  const guard = new FinancVault.PinGuard(nativeStorage);
+  const guardSteps = () => step === 'unlock' || step === 'join';
+  const guardLocked = () => guardSteps() && guard.state().locked;
+  const GUARD_LOCKED_MSG = 'O PIN foi bloqueado depois de 10 tentativas erradas. Use a biometria ou "Esqueci o PIN" (12 palavras) para criar um PIN novo.';
   window.secureStorage = vault;
   // Uma aba por vez. Ao recarregar (bloqueio, atualização do app) a página anterior ainda pode segurar a trava
   // por alguns instantes, e no celular uma aba congelada em segundo plano segura sem aparecer: por isso tenta
@@ -218,10 +228,10 @@
   const secretReady = () => passwordMode() ? get('vaultPassword').value.length > 0 : pinInput.value.length === 6;
   function setBusy(value) {
     busy = value;
-    const off = value || blocked;
+    const locked = guardLocked(), off = value || blocked || locked;
     get('vaultSubmit').disabled = off || (PIN_STEPS.has(step) && !secretReady());
     pinInput.disabled = off; get('vaultPassword').disabled = off;
-    panel.querySelectorAll('#vaultKeypad button').forEach(b => { b.disabled = off; });
+    panel.querySelectorAll('#vaultKeypad button').forEach(b => { b.disabled = b.dataset.key === 'bio' ? value || blocked : off; });
   }
   function refreshBiometric() {
     const key = panel.querySelector('.vault-key-bio');
@@ -287,6 +297,22 @@
   // Sem cofre deste app: com FINANC ID no aparelho, só pede o PIN dele; sem, cria o PIN FINANC.
   const firstStep = () => vault.exists ? 'unlock' : vault.identity.exists ? 'join' : 'create';
   go(firstStep());
+  // Espera ou bloqueio que vieram de tentativas anteriores (recarregar a página não zera).
+  function waitGuard(message) {
+    const st = guard.state();
+    if (st.locked && guardSteps()) { get('vaultMessage').textContent = GUARD_LOCKED_MSG; setBusy(false); return true; }
+    if (st.waitMs <= 0 || !guardSteps()) return false;
+    const until = Date.now() + st.waitMs; clearInterval(countdown); setBusy(true);
+    const tick = () => {
+      const left = Math.ceil((until - Date.now()) / 1000);
+      if (left <= 0) { clearInterval(countdown); get('vaultMessage').textContent = message || ''; setBusy(false); pinInput.focus({ preventScroll: true }); return; }
+      const t = left >= 120 ? Math.ceil(left / 60) + ' min' : left + 's';
+      get('vaultMessage').textContent = (message ? message + ' ' : 'Muitas tentativas erradas. ') + 'Aguarde ' + t + '.';
+    };
+    tick(); countdown = setInterval(tick, 250);
+    return true;
+  }
+  waitGuard();
 
   async function unlockWithBiometric(auto) {
     const info = vault.biometric;
@@ -296,7 +322,7 @@
       await legacyCleanup; await sessionReady;
       const secret = await bio.evaluate(info.credentialId, info.prfSalt);
       let status; try { status = await vault.unlockBiometric(secret); } finally { secret.fill(0); }
-      failedAttempts = 0; get('vaultForm').reset();
+      failedAttempts = 0; guard.reset(); get('vaultForm').reset();
       if (status && status.seed) showSeed(status.seed, '', 'migrated'); else finish();
     } catch (error) {
       if (!auto) get('vaultMessage').textContent = error.name === 'NotAllowedError' ? 'Biometria cancelada ou não reconhecida. Use o PIN.'
@@ -355,10 +381,14 @@
   }
 
   function finish() {
-    vault.cleanupLegacy(matches);
+    try { vault.cleanupLegacy(matches); } catch (_) {}
     root.classList.remove('vault-locked'); panel.remove();
     mountProfile();
     lastActivity = Date.now(); saveSession();
+    // Grava o que ficou pendente ao abrir (passagem dos dados para o IndexedDB, data do primeiro uso) e então limpa o legado.
+    vault.flush().then(() => { try { vault.cleanupLegacy(matches); } catch (_) {} }).catch(error => vault.onError(error));
+    ensurePersisted();
+    setTimeout(remindBackup, 1500);
     // O app só começa depois de o certificado antigo dele passar para o certificado FINANC.
     adoptCertificate().catch(() => {}).then(resolveReady);
   }
@@ -465,6 +495,7 @@
     if ((step === 'create-confirm' || step === 'recover-confirm') && pin !== firstPin) {
       firstPin = ''; go(step === 'create-confirm' ? 'create' : 'recover-pin'); fail('Os PINs não coincidem. Comece de novo.'); return;
     }
+    if (guardSteps() && vault.identity.exists && waitGuard()) return;
     setBusy(true);
     try {
       await legacyCleanup; await sessionReady;
@@ -495,6 +526,13 @@
     } catch (error) {
       failedAttempts += 1;
       const wrong = error.name === 'OperationError';
+      // PIN do aparelho errado: conta no contador gravado (espera crescente, bloqueio na 10ª).
+      if (wrong && guardSteps()) {
+        const st = guard.fail();
+        fail(passwordMode() ? 'Senha incorreta.' : 'PIN incorreto.' + (st.left > 0 && st.left <= 5 ? ' Restam ' + st.left + ' tentativas.' : ''));
+        if (!waitGuard(get('vaultMessage').textContent)) setBusy(false);
+        return;
+      }
       const delay = wrong ? Math.min(30000, failedAttempts * failedAttempts * 500) : 0;
       if ((wrong || error.code === 'SEED_INVALID') && step === 'recover-confirm') go('recover-code');
       fail(wrong ? (step === 'recover-code' ? 'Palavras ou código incorretos.' : passwordMode() ? 'Senha incorreta.' : 'PIN incorreto.') : error.message);
@@ -510,7 +548,7 @@
       } else setBusy(false);
     }
   };
-  function done() { failedAttempts = 0; firstPin = ''; recoveryInput = ''; get('vaultForm').reset(); }
+  function done() { failedAttempts = 0; guard.reset(); firstPin = ''; recoveryInput = ''; get('vaultForm').reset(); }
   // Depois de abrir: mostra o código FINANC novo, ou liga o app ao PIN FINANC quando os PINs eram diferentes.
   async function afterUnlock(status, pin, kind) {
     if (status.needsIdentityPin) { const linked = await askIdentityPin(); if (linked) { pin = linked.pin; if (linked.status.seed) status = linked.status; } }
@@ -592,6 +630,134 @@
     dialog.onclose = () => { input.value = ''; confirm.value = ''; dialog.remove(); resolve(result); };
     form.append(head, input, confirm, actions); dialog.append(form); document.body.append(dialog); dialog.showModal(); input.focus();
   });
+  /* ───────── Seus dados: proteção contra limpeza, backup, restaurar, mudar de celular ───────── */
+  // Pede ao navegador para não apagar os dados sozinho (Chrome concede a apps instalados ou muito usados).
+  let persisted = null, storageInfo = null;
+  async function ensurePersisted() {
+    try {
+      if (!navigator.storage || !navigator.storage.persist) { persisted = 'indisponivel'; return; }
+      persisted = (await navigator.storage.persisted()) || (await navigator.storage.persist()) ? 'sim' : 'nao';
+    } catch (_) { persisted = 'indisponivel'; }
+    refreshStorageInfo();
+  }
+  addEventListener('appinstalled', () => { ensurePersisted(); });
+  async function refreshStorageInfo() {
+    try { if (navigator.storage && navigator.storage.estimate) storageInfo = await navigator.storage.estimate(); } catch (_) {}
+    if (window.FinancSettings) window.FinancSettings.refresh();
+  }
+  const mb = bytes => (bytes / 1048576).toLocaleString('pt-BR', { maximumFractionDigits: bytes < 10485760 ? 1 : 0 }) + ' MB';
+  const kb = bytes => Math.max(1, Math.round(bytes / 1024)).toLocaleString('pt-BR') + ' KB';
+  const dateBR = ms => new Date(ms).toLocaleDateString('pt-BR');
+  const fileDate = () => new Date().toISOString().slice(0, 10);
+  const slug = text => text.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || appId;
+  // Entrega um arquivo: no celular, a lista de compartilhar do sistema (Google Drive, Arquivos, WhatsApp para si mesmo);
+  // em qualquer lugar, baixar. O Chrome só compartilha alguns tipos (.json não, .txt sim): por isso o arquivo é .txt.
+  // Devolve 'shared', 'downloaded' ou null (fechou sem salvar).
+  function deliverFile(text, baseName, title, help) {
+    const name = baseName + '.txt';
+    const file = typeof File === 'function' ? new File([text], name, { type: 'text/plain' }) : null;
+    const canShare = Boolean(file && navigator.canShare && navigator.share && (() => { try { return navigator.canShare({ files: [file] }); } catch (_) { return false; } })());
+    return dialogBox((dialog, close) => {
+      dialog.innerHTML = '<div class="vault-dialog-head"><span class="vault-badge">' + icon('shield-check', 18) + '</span><p><b></b></p></div><p class="vault-dim"></p><p class="vault-file-name"></p>'
+        + '<p class="vault-dialog-msg" role="alert"></p><div class="vault-dialog-actions vault-dialog-stack">'
+        + (canShare ? '<button type="button" data-a="share" class="vault-dialog-primary">' + icon('share-2', 16) + 'Salvar no Drive, Arquivos…</button>' : '')
+        + '<button type="button" data-a="download"' + (canShare ? '' : ' class="vault-dialog-primary"') + '>' + icon('download', 16) + 'Baixar arquivo</button>'
+        + '<button type="button" data-a="no">Fechar</button></div>';
+      dialog.querySelector('b').textContent = title;
+      dialog.querySelector('.vault-dim').textContent = help;
+      dialog.querySelector('.vault-file-name').textContent = name;
+      const msg = dialog.querySelector('.vault-dialog-msg');
+      const shareBtn = dialog.querySelector('[data-a=share]');
+      if (shareBtn) shareBtn.onclick = async () => {
+        try { await navigator.share({ files: [file], title: name }); close('shared'); }
+        catch (error) { if (error.name !== 'AbortError') msg.textContent = 'Não deu para compartilhar (' + error.message + '). Use "Baixar arquivo".'; }
+      };
+      dialog.querySelector('[data-a=download]').onclick = () => {
+        const url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+        const a = document.createElement('a'); a.href = url; a.download = name; document.body.append(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        close('downloaded');
+      };
+      dialog.querySelector('[data-a=no]').onclick = () => close(null);
+    });
+  }
+  const COPY_HELP = 'Guarde fora deste aparelho (Google Drive, computador). O arquivo é cifrado: abre só com as suas 12 palavras.';
+  // Cópia de segurança deste app (todos os dados do cofre). true se o arquivo foi salvo.
+  async function backupNow() {
+    if (!vault.hasSeed) throw new Error('A cópia usa as 12 palavras. Em Configurações, toque em "Usar o PIN único" (ou bloqueie e abra de novo) e tente outra vez.');
+    const payload = await vault.exportCopy();
+    const out = await deliverFile(JSON.stringify(payload), slug(appName) + '-copia-' + fileDate(), 'Cópia de segurança pronta', COPY_HELP);
+    if (out) { await vault.markBackup(); return true; }
+    return false;
+  }
+  // Abre um arquivo de cópia escolhido pela pessoa (deste app ou de todos os apps), pedindo as 12 palavras se for de outro aparelho.
+  function pickFile() {
+    return new Promise(resolve => {
+      const input = document.createElement('input'); input.type = 'file'; input.accept = '.txt,.json,text/plain,application/json';
+      input.onchange = async () => { const f = input.files && input.files[0]; resolve(f ? await f.text() : null); };
+      input.oncancel = () => resolve(null);
+      input.click();
+    });
+  }
+  async function openCopyFile() {
+    const text = await pickFile();
+    if (!text) return null;
+    let payload; try { payload = JSON.parse(text); } catch (_) { throw new Error('Este arquivo não é uma cópia de segurança.'); }
+    if (payload && payload.format === FinancVault.seed.BACKUP_FORMAT && /:backup$/.test(payload.context || '')) throw new Error('Este arquivo é um backup do próprio app: abra pela importação do ' + appName + '.');
+    try { return await vault.openCopy(payload); }
+    catch (error) { if (error.code !== 'SEED_REQUIRED') throw error; }
+    let label = 'Esta cópia foi feita com outras 12 palavras. Digite essas palavras ou o código de 12 caracteres:';
+    for (let tries = 0; tries < 5; tries++) {
+      const words = await askSeed(label);
+      if (!words) return null;
+      try { return await vault.openCopy(payload, words); }
+      catch (error) { if (error.code !== 'SEED_INVALID' && error.name !== 'OperationError') throw error; label = error.code === 'SEED_INVALID' ? error.message : 'Essas palavras não abrem esta cópia. Tente de novo:'; }
+    }
+    return null;
+  }
+  const describeCopy = copy => copy.format === FinancVault.ALL_FORMAT
+    ? 'Cópia de todos os apps (' + Object.keys(copy.apps).length + ': ' + Object.keys(copy.apps).join(', ') + ') feita em ' + dateBR(copy.at) + '.'
+    : 'Cópia do ' + appName + ' feita em ' + dateBR(copy.at) + ', com ' + Object.keys(copy.values).length + ' registros.';
+  async function restoreFlow() {
+    const copy = await openCopyFile();
+    if (!copy) return null;
+    const all = copy.format === FinancVault.ALL_FORMAT;
+    const ok = await confirmDanger(all ? 'Restaurar todos os apps?' : 'Restaurar esta cópia?',
+      describeCopy(copy) + (all ? ' Os dados dos apps da cópia neste aparelho serão substituídos. Feche os outros apps abertos antes.' : ' Os dados atuais deste app serão substituídos.') + ' Não pode ser desfeito.',
+      'Restaurar');
+    if (!ok) return null;
+    if (all) await vault.restoreAll(copy); else await vault.restoreValues(copy.values);
+    locking = true; saveSession(); location.reload();
+    return 'Restaurado.';
+  }
+  async function checkFlow() {
+    const copy = await openCopyFile();
+    if (!copy) return null;
+    return 'Esta cópia abre: ' + describeCopy(copy) + ' Nada foi alterado.';
+  }
+  async function movePhoneFlow() {
+    if (!vault.hasSeed) throw new Error('A cópia usa as 12 palavras. Ligue este app ao PIN único e tente de novo.');
+    const out = await vault.exportAll();
+    const help = 'No celular novo: abra qualquer app, crie o PIN, vá em Configurações → Seus dados → Restaurar cópia de segurança, escolha este arquivo e digite as 12 palavras DESTE aparelho.'
+      + (out.skipped.length ? ' Ficaram de fora (ainda com PIN próprio): ' + out.skipped.join(', ') + '.' : '');
+    const saved = await deliverFile(JSON.stringify(out.payload), 'financ-todos-os-apps-' + fileDate(), 'Cópia de todos os apps pronta (' + out.apps.length + ')', help);
+    if (saved) { await vault.markBackup(); return 'Cópia de ' + out.apps.length + ' apps salva. Siga os passos no celular novo.'; }
+    return null;
+  }
+  // Lembrete discreto ao abrir: só com mudança desde o último backup e prazo vencido.
+  function remindBackup() {
+    if (!vault.key || locking || document.getElementById('vaultBackupNudge')) return;
+    let st; try { st = vault.backupStatus(); } catch (_) { return; }
+    if (!st.due || !vault.hasSeed) return;
+    const box = document.createElement('aside'); box.id = 'vaultBackupNudge'; box.setAttribute('role', 'status');
+    box.innerHTML = '<span class="vbn-ic">' + icon('shield-check', 18) + '</span><p></p><div class="vbn-actions"><button type="button" data-a="now" class="vbn-primary">Fazer backup</button><button type="button" data-a="later">Depois</button></div>';
+    box.querySelector('p').textContent = st.backupAt ? 'Seu último backup foi há ' + st.ageDays + ' dias e houve mudanças desde então.' : 'Você ainda não fez uma cópia de segurança dos dados deste app.';
+    box.querySelector('[data-a=now]').onclick = async () => { box.remove(); try { await backupNow(); } catch (error) { status.textContent = error.message; setTimeout(() => { status.textContent = ''; }, 6000); } };
+    box.querySelector('[data-a=later]').onclick = async () => { box.remove(); try { await vault.snoozeBackup(3); } catch (_) {} };
+    document.body.append(box);
+  }
+  window.FinancBackup = Object.freeze({ now: backupNow, restore: restoreFlow, check: checkFlow, movePhone: movePhoneFlow, status: () => vault.key ? vault.backupStatus() : null });
+
   /* ───────── Menu do app: botão de 3 pontos que abre um painel lateral à esquerda ───────── */
   function avatarMarkup(size) {
     if (logoLink) return '<img src="' + esc(logoLink.getAttribute('href')) + '" alt="" width="' + size + '" height="' + size + '">';
@@ -666,19 +832,19 @@
   /* ───────── Configurações (aba ou tela cheia) ───────── */
   const extraSections = [], groups = [];
   let mounted = null, handling = false;
-  let pinFailures = 0, pinBlockedUntil = 0;
-  // Operações que conferem o PIN dentro do app também têm espera progressiva contra tentativa e erro.
+  // Operações que conferem o PIN dentro do app usam o mesmo contador gravado da tela de desbloqueio.
   async function withPin(label, action) {
-    const wait = pinBlockedUntil - Date.now();
-    if (wait > 0) throw new Error('Muitas tentativas. Aguarde ' + Math.ceil(wait / 1000) + 's.');
+    const gs = guard.state();
+    if (gs.locked) throw new Error('O PIN está bloqueado por tentativas erradas. Bloqueie o app e use "Esqueci o PIN" (12 palavras) ou a biometria.');
+    if (gs.waitMs > 0) throw new Error('Muitas tentativas. Aguarde ' + Math.ceil(gs.waitMs / 1000) + 's.');
     const text = vault.secretKind === 'password';
     const pin = await window.askSecret(text ? label.replace(/\bseu PIN\b/, 'sua senha').replace(/\bo PIN\b/, 'a senha') : label, false, text, false, true);
     if (!pin) return null;
-    try { const result = await action(pin); pinFailures = 0; return result ?? true; }
+    try { const result = await action(pin); guard.reset(); return result ?? true; }
     catch (error) {
       if (error.name === 'OperationError') {
-        pinFailures += 1; pinBlockedUntil = Date.now() + Math.min(30000, pinFailures * pinFailures * 500);
-        throw new Error(vault.secretKind === 'password' ? 'Senha incorreta.' : 'PIN incorreto.');
+        const st = guard.fail();
+        throw new Error((vault.secretKind === 'password' ? 'Senha incorreta.' : 'PIN incorreto.') + (st.locked ? ' O PIN foi bloqueado.' : st.left <= 5 ? ' Restam ' + st.left + ' tentativas.' : ''));
       }
       throw error;
     }
@@ -746,10 +912,29 @@
   };
   const group = (title, body) => '<section class="fs-group"><h3 class="fs-title">' + esc(title) + '</h3><div class="fs-list">' + body + '</div></section>';
 
+  function dataRows() {
+    const st = vault.backupStatus(), use = vault.usage;
+    const outside = FinancVault.OUTSIDE_DATA.includes(appId);
+    const used = storageInfo && storageInfo.usage ? ' · navegador: ' + mb(storageInfo.usage) + (storageInfo.quota ? ' de ' + mb(storageInfo.quota) : '') : '';
+    const full = storageInfo && storageInfo.quota && storageInfo.usage / storageInfo.quota >= 0.7;
+    const prot = persisted === 'sim' ? ['Ligada: o navegador não apaga os dados sozinho.', { text: 'ligada', tone: 'pos' }]
+      : persisted === 'nao' ? ['Não garantida: em pouco espaço, o navegador pode apagar dados. Instale o app na tela inicial para proteger.', { text: 'não garantida', tone: 'warn' }]
+      : ['Este navegador não informa.', null];
+    const last = st.backupAt ? 'Há ' + st.ageDays + ' dia' + (st.ageDays === 1 ? '' : 's') + ' (' + dateBR(st.backupAt) + ')' + (st.changed ? ', com mudanças depois.' : ', sem mudanças depois.') : 'Nenhuma cópia ainda.';
+    return row('database', 'Espaço usado', kb(use.appBytes) + ' deste app' + (use.inIndexedDB ? ' (IndexedDB)' : '') + used + (full ? '. Quase cheio: faça uma cópia e apague registros antigos.' : '.'), badge(full ? { text: 'quase cheio', tone: 'warn' } : null))
+      + row('shield-check', 'Proteção contra limpeza', prot[0], badge(prot[1]))
+      + (persisted === 'nao' ? actionRow('persist', 'shield', 'Pedir proteção ao navegador', 'Tenta de novo. Apps instalados costumam ganhar a proteção.') : '')
+      + (outside ? row('info', 'Cópia de segurança', 'Os dados do ' + appName + ' ficam no armazenamento próprio dele: use o backup do próprio app.') : '')
+      + (outside ? '' : row('history', 'Última cópia de segurança', last, badge(st.due ? { text: 'pendente', tone: 'warn' } : null))
+      + actionRow('backup-now', 'download', 'Fazer cópia de segurança agora', 'Um arquivo com todos os dados deste app, cifrado pelas 12 palavras.', 'fs-accent')
+      + row('bell', 'Lembrete de cópia', 'Avisa ao abrir quando houver mudanças sem cópia.', '<select class="fs-select" data-fs="backup-days" aria-label="Lembrete de cópia">' + FinancVault.BACKUP_DAYS.map(d => '<option value="' + d + '"' + (d === st.days ? ' selected' : '') + '>' + (d ? d + ' dias' : 'desligado') + '</option>').join('') + '</select>')
+      + actionRow('restore', 'upload', 'Restaurar cópia de segurança', 'Troca os dados deste app (ou de todos) pelos de uma cópia.')
+      + actionRow('check-copy', 'check', 'Conferir uma cópia', 'Abre o arquivo sem mudar nada e diz de quando é.')
+      + actionRow('move-phone', 'smartphone', 'Mudar de celular', 'Uma cópia de todos os apps deste aparelho para levar ao novo.'));
+  }
   function renderSettings(container) {
     if (!vault.key) return;
     const cfg = vault.settings, bioOn = Boolean(vault.biometric);
-    const size = (() => { try { return (nativeStorage.getItem(vault.storageKey) || '').length; } catch (_) { return 0; } })();
     let html = group('Segurança',
       (vault.linked ? '' : actionRow('link', 'link', 'Usar o PIN único', 'Um só PIN, código e biometria para todos os apps.'))
       + actionRow('pin', 'key', vault.secretKind === 'password' ? 'Alterar senha' : 'Alterar PIN', vault.linked ? 'Vale para todos os apps deste aparelho.' : 'Pede o PIN atual e o novo PIN.')
@@ -764,10 +949,10 @@
         : actionRow('recovery', 'shield-check', 'Novo código de recuperação', 'Gera outro código e invalida o anterior.'))
       + actionRow('lock', 'lock', 'Bloquear agora', '', 'fs-accent'));
     groups.forEach((g, gi) => { g.current = g.rows() || []; if (g.current.length) html += group(g.title, g.current.map(r => groupRow(gi, r)).join('')); });
+    html += group('Seus dados', dataRows());
     if (installPrompt) html += group('App', actionRow('install', 'download', 'Instalar app', 'Coloca o ' + appName + ' na tela inicial, como um app.'));
     extraSections.forEach((sec, si) => { html += group(sec.title, sec.rows.map((r, ri) => actionRow('x' + si + '-' + ri, r.icon || 'chevron-right', r.label, r.description || '', r.danger ? 'fs-danger' : '')).join('')); });
-    html += group('Sobre', row('database', 'Armazenamento', 'Cofre local criptografado (AES-256-GCM) · ' + Math.max(1, Math.round(size / 1024)) + ' KB neste navegador.')
-      + row('info', appName + (VERSION ? ' ' + VERSION : ''), 'Kit de segurança 2.0 · PIN único, biometria e bloqueio automático.'));
+    html += group('Sobre', row('info', appName + (VERSION ? ' ' + VERSION : ''), 'Kit de segurança 2.1 · PIN único, biometria, bloqueio automático e dados cifrados (AES-256-GCM) neste aparelho.'));
     html += group('Zona de perigo', actionRow('destroy', 'trash', 'Apagar todos os dados deste app', 'Remove o cofre deste app. O PIN continua valendo nos outros apps. Não pode ser desfeito.', 'fs-danger'));
     mounted = container;
     container.innerHTML = '<div class="fs">' + html + '<p class="fs-toast" role="status" aria-live="polite"></p></div>';
@@ -778,8 +963,9 @@
     const el = event.target.closest('[data-fs]');
     if (!el || el.disabled || !container.contains(el)) return;
     const kind = el.dataset.fs;
-    if (kind === 'autolock' && event.type !== 'change') return;
-    if (kind !== 'autolock' && event.type === 'change') return;
+    const isSelect = kind === 'autolock' || kind === 'backup-days';
+    if (isSelect && event.type !== 'change') return;
+    if (!isSelect && event.type === 'change') return;
     const toast = container.querySelector('.fs-toast');
     const say = (text, bad) => { toast.textContent = text; toast.classList.toggle('fs-bad', Boolean(bad)); };
     say('');
@@ -821,6 +1007,21 @@
         const minutes = Number(el.value);
         await vault.setSettings({ autoLockMinutes: minutes }); lastActivity = Date.now();
         say('Bloqueio automático: ' + minutes + ' min.');
+      } else if (kind === 'backup-days') {
+        const days = Number(el.value);
+        await vault.setBackupDays(days);
+        say(days ? 'Lembrete de cópia: a cada ' + days + ' dias com mudanças.' : 'Lembrete de cópia desligado.');
+      } else if (kind === 'backup-now') {
+        if (await backupNow()) say('Cópia de segurança salva.');
+      } else if (kind === 'restore') {
+        const message = await restoreFlow(); if (message) say(message);
+      } else if (kind === 'check-copy') {
+        const message = await checkFlow(); if (message) say(message);
+      } else if (kind === 'move-phone') {
+        const message = await movePhoneFlow(); if (message) say(message);
+      } else if (kind === 'persist') {
+        await ensurePersisted();
+        say(persisted === 'sim' ? 'Proteção ligada.' : 'O navegador ainda não concedeu. Instale o app na tela inicial e tente de novo.', persisted !== 'sim');
       } else if (kind === 'hide') {
         const next = await vault.setSettings({ lockOnHide: !vault.settings.lockOnHide });
         say(next.lockOnHide ? 'O app vai bloquear ao sair.' : 'Bloqueio ao sair desativado.');
@@ -880,7 +1081,7 @@
       renderSettings(mounted);
       const fresh = mounted.querySelector('.fs-toast'); if (fresh) { fresh.textContent = message; fresh.classList.toggle('fs-bad', bad); }
     },
-    mount(container) { renderSettings(container); },
+    mount(container) { renderSettings(container); refreshStorageInfo(); },
     open() {
       if (!vault.key || sheet) return;
       sheet = document.createElement('dialog'); sheet.className = 'fs-sheet'; sheet.setAttribute('aria-labelledby', 'fsSheetTitle');
@@ -888,7 +1089,7 @@
       sheet.querySelector('.fs-head span').textContent = appName;
       sheet.querySelector('.fs-back').onclick = closeSheet;
       sheet.onclose = () => { sheet.remove(); sheet = null; };
-      document.body.append(sheet); renderSettings(sheet.querySelector('.fs-body')); sheet.showModal();
+      document.body.append(sheet); renderSettings(sheet.querySelector('.fs-body')); sheet.showModal(); refreshStorageInfo();
     },
   };
   window.vaultSettings = () => window.FinancSettings.open();
@@ -901,6 +1102,11 @@
       const passphrase = await window.askSecret('Crie uma senha para este arquivo (mínimo de ' + FinancVault.PASSPHRASE_MIN + ' caracteres; pode ser uma frase):', true, true, true);
       if (!passphrase) return;
       payload = await FinancVault.protectPassphrase(value, passphrase, context);
+    }
+    if (/:backup$/.test(context)) {
+      const saved = await deliverFile(JSON.stringify(payload), String(filename).replace(/\.(secure\.)?json$/i, ''), 'Backup pronto', COPY_HELP);
+      if (saved) { try { await vault.markBackup(); } catch (_) {} }
+      return;
     }
     const url = URL.createObjectURL(new Blob([JSON.stringify(payload)], { type: 'application/json' }));
     const a = document.createElement('a'); a.href = url; a.download = filename; a.click(); URL.revokeObjectURL(url);

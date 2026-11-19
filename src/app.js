@@ -104,14 +104,34 @@
     [STORAGE_KEY, SECURITY_META_KEY, SECURITY_DATA_KEY, SECURITY_RECOVERY_KEY,
       'livro_caixa_session_unlocked_v1', 'livro_caixa_session_last_activity_v1'].forEach(key => localStorage.removeItem(key));
     await localStorage.flush();
+    // Ponto de retorno de qualquer falha de gravação: o estado como ficou depois de abrir (todos os caminhos de load).
+    lastSavedJson = JSON.stringify(state);
     document.body.classList.remove('locked');
   }
   var saveTimer = null;
+  // Último estado realmente gravado (JSON): é para ele que a tela volta se uma gravação falhar.
+  var lastSavedJson = null;
   async function save(){
-    localStorage.setItem(STATE_KEY, JSON.stringify(state));
+    var json = JSON.stringify(state);
+    localStorage.setItem(STATE_KEY, json);
     await localStorage.flush();
+    lastSavedJson = json;
     const el = document.getElementById('saveStatus');
     el.textContent = 'salvo e criptografado neste navegador';
+  }
+  /** Grava sem lançar; se falhar, avisa, volta ao último estado gravado e não deixa a tela dizer "salvo". */
+  async function persist(){
+    document.getElementById('saveStatus').textContent = 'salvando…';
+    var r = await Engine.gravarComReversao(JSON.stringify(state), save, lastSavedJson);
+    if (r.ok) return true;
+    console.error('Livro-Caixa: falha ao gravar os dados.');
+    if (lastSavedJson) {
+      try { normalizeState(JSON.parse(lastSavedJson)); localStorage.setItem(STATE_KEY, lastSavedJson); } catch (e) { /* mantém o que está em memória; já avisamos */ }
+    }
+    document.getElementById('saveStatus').textContent = 'não salvo: a última alteração não foi gravada';
+    renderAll();
+    await showMessage('Não foi possível salvar', Engine.MSG_FALHA_SALVAR);
+    return false;
   }
   function escapeHtml(value) { return String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
@@ -275,7 +295,7 @@
 
     document.getElementById('cartaoUsadoLabel').textContent = fmt(usado);
     document.getElementById('cartaoLimiteLabel').textContent = fmt(limite);
-    document.getElementById('cartaoFill').style.width = pct + '%';
+    document.getElementById('cartaoFill').style.setProperty('--pct', pct + '%');
     document.getElementById('sumCartao').textContent = fmt(disponivel);
 
     var bar = document.getElementById('limiteBar');
@@ -371,7 +391,7 @@
   }
 
 
-  function setSaldoColor(el, cents){ el.style.color = cents < 0 ? 'var(--rust)' : 'var(--green)'; }
+  function setSaldoColor(el, cents){ el.classList.toggle('is-neg', cents < 0); el.classList.toggle('is-pos', cents >= 0); }
   function renderSummary(){
     var r = Engine.monthSummary(state, hoje());
     document.getElementById('sumEntradas').textContent = fmt(r.caixa.entradas);
@@ -408,12 +428,13 @@
 
     var bs = Engine.budgetStatus(state, mk);
     document.getElementById('listOrcamentos').innerHTML = bs.length ? bs.map(function(b){
-      return '<div class="card-limit-bar' + (b.nivel === 'danger' ? ' danger' : b.nivel === 'warn' ? ' warn' : '') + '" data-cat="' + escapeHtml(b.categoria) + '" style="margin-bottom:10px">' +
+      return '<div class="card-limit-bar' + (b.nivel === 'danger' ? ' danger' : b.nivel === 'warn' ? ' warn' : '') + '" data-cat="' + escapeHtml(b.categoria) + '">' +
         '<div class="top-line"><span>' + escapeHtml(b.categoria) + ' · gasto <b class="num">' + fmt(b.gasto) + '</b></span><span>orçamento <b class="num">' + fmt(b.orcamento) + '</b></span></div>' +
-        '<div class="track"><div class="fill" style="width:' + Math.min(100, b.pct) + '%"></div></div>' +
+        '<div class="track"><div class="fill" data-pct="' + Math.min(100, b.pct) + '"></div></div>' +
         '<div class="config-row"><span>' + (b.estourou ? 'estourou em <b>' + fmt(-b.restante) + '</b>' : 'restam <b>' + fmt(b.restante) + '</b>') + ' (' + Math.round(b.pct) + '%)</span>' +
-        '<span class="actions"><button class="del" data-action="del-orcamento" type="button" style="all:unset;cursor:pointer;color:var(--rust)">remover</button></span></div></div>';
+        '<span class="actions"><button class="del" data-action="del-orcamento" type="button">remover</button></span></div></div>';
     }).join('') : '<div class="empty">nenhum orçamento definido.</div>';
+    document.querySelectorAll('#listOrcamentos [data-pct]').forEach(function(el){ el.style.setProperty('--pct', el.dataset.pct + '%'); });
   }
 
   function renderRecorrencias(){
@@ -429,7 +450,7 @@
     document.getElementById('projecao').innerHTML = '<div class="proj-grid">' + ps.map(function(p){
       var neg = p.resultado < 0;
       return '<div class="rec-box"><div class="t">próximos ' + p.dias + ' dias · até ' + dateBR(p.ate) + '</div>' +
-        '<div class="value num" style="font-size:1.1rem;font-weight:600;color:var(' + (neg ? '--rust' : '--green') + ')">' + fmt(p.resultado) + '</div>' +
+        '<div class="value num ' + (neg ? 'is-neg' : 'is-pos') + '">' + fmt(p.resultado) + '</div>' +
         '<div class="rec-result">' +
         '+ entradas esperadas ' + fmt(p.entradas) + '<br>− despesas em aberto ' + fmt(p.saidas.despesas) + '<br>− parcelas de dívidas ' + fmt(p.saidas.dividas) + '<br>− faturas previstas ' + fmt(p.saidas.cartao) +
         (p.atrasadas ? '<br>(inclui ' + fmt(p.atrasadas) + ' em atraso)' : '') + '</div></div>';
@@ -495,7 +516,12 @@
   window.addEventListener('popstate', closeReport);
 
   // Depois de qualquer mudança: gera as ocorrências recorrentes que faltam, salva e redesenha.
-  function commit(){ Engine.materializeRecurrences(state, hoje()); save(); renderAll(); }
+  // Mostra já o resultado; se a gravação falhar, persist() volta ao último estado gravado e avisa.
+  // O formulário só é limpo depois que a gravação deu certo; se falhar, o usuário não perde o que digitou.
+  function limparSeGravou(formId, gravando, depois){
+    return gravando.then(function(ok){ if (ok) { document.getElementById(formId).reset(); if (depois) depois(); } return ok; });
+  }
+  function commit(){ Engine.materializeRecurrences(state, hoje()); renderAll(); return persist(); }
 
   // ---------- forms ----------
   // Lê um campo de valor (reais) e devolve centavos inteiros; 0 se vazio, inválido ou acima do teto (B5).
@@ -512,8 +538,7 @@
       var catD = document.getElementById('dCat').value, natD = document.getElementById('dNat').value;
       if (document.getElementById('dRep').value === 'mensal') Engine.addRecurrence(state, {tipo: 'despesa', valor: valor, descricao: desc, inicio: venc, categoria: catD, natureza: natD});
       else state.expenses.push(Engine.makeExpense({valor: valor, descricao: desc, vencimento: venc, categoria: catD, natureza: natD}));
-      document.getElementById('formDespesa').reset();
-      commit();
+      limparSeGravou('formDespesa', commit());
     },
     formEntrada_submit: function(e) {
       e.preventDefault();
@@ -524,15 +549,14 @@
       var catE = document.getElementById('eCat').value;
       if (document.getElementById('eRep').value === 'mensal') Engine.addRecurrence(state, {tipo: 'entrada', valor: valor, descricao: desc, inicio: data, categoria: catE});
       else state.income.push(Engine.makeIncome({valor: valor, descricao: desc, data: data, categoria: catE}));
-      document.getElementById('formEntrada').reset();
-      commit();
+      limparSeGravou('formEntrada', commit());
     },
     formOrcamento_submit: function(e) {
       e.preventDefault();
       var cents = Engine.parseCents(document.getElementById('oValor').value);
       var r = Engine.setBudget(state, document.getElementById('oCat').value, cents === null ? -1 : cents);
       if (!r.ok) { showMessage('Orçamento inválido', r.erro); return; }
-      document.getElementById('formOrcamento').reset(); commit();
+      limparSeGravou('formOrcamento', commit());
     },
     rMes_input: renderRelatorio,
     listOrcamentos_click: function(e) {
@@ -567,9 +591,7 @@
       var tipo = document.getElementById('ccTipo').value;
       var parcelas = Math.min(48, Math.max(1, parseInt(document.getElementById('ccParcelas').value) || 1));
       Engine.addCardPurchase(state, {valor: valor, descricao: desc, data: data, tipo: tipo, parcelas: parcelas, categoria: document.getElementById('ccCat').value});
-      document.getElementById('formCartao').reset();
-      document.getElementById('ccData').value = hoje();
-      commit();
+      limparSeGravou('formCartao', commit(), function(){ document.getElementById('ccData').value = hoje(); });
     },
     formDivida_submit: function(e) {
       e.preventDefault();
@@ -583,10 +605,7 @@
       state.debts.push({id: uid(), valorParcela: valorParcela, descricao: desc, parcelas: parcelas, parcelaAtual: 1, vencimento: venc,
         diaOriginal: Engine.parseISO(venc).d, pago: false, pagas: [], valorContratado: contratado > 0 ? contratado : null,
         taxa: Number.isFinite(taxa) && taxa >= 0 && taxa <= 1000 ? taxa : null, categoria: 'Dívidas'});
-      document.getElementById('formDivida').reset();
-      document.getElementById('vParcelas').value = 1;
-      document.getElementById('vVenc').value = hoje();
-      commit();
+      limparSeGravou('formDivida', commit(), function(){ document.getElementById('vParcelas').value = 1; document.getElementById('vVenc').value = hoje(); });
     },
     wrap_click: async function(e) {
       var btn = e.target.closest('button[data-action]');
@@ -688,9 +707,9 @@
             throw new Error('backup não criptografado');
           }
           if (!await askConfirm({title: 'Substituir todos os dados?', text: 'Importar este arquivo vai substituir todos os dados atuais.', action: 'Importar', danger: true})) return;
-          normalizeState(data); await commit();
+          normalizeState(data); if (!await commit()) return;
           document.getElementById('saveStatus').textContent='backup importado e salvo criptografado'+(oldFormat?'. Este backup usa a proteção antiga: exporte um novo para ficar com a proteção atual.':'');
-        } catch(err) { showMessage('Backup inválido', err && err.message && !/^[a-z]/.test(err.message) ? err.message : 'Backup inválido, senha incorreta ou arquivo não criptografado.'); }
+        } catch(err) { showMessage('Backup inválido', Engine.mensagemAoUsuario(err, 'Backup inválido, senha incorreta ou arquivo não criptografado.')); }
       };
       reader.readAsText(file); e.target.value='';
     },
@@ -698,7 +717,7 @@
     btnBiometric_click: () => window.vaultSettings(),
     btnReset_click: async function() {
       if (await askConfirm({title: 'Apagar todos os lançamentos?', text: 'Isso vai apagar TODOS os dados deste navegador. Tem certeza?', action: 'Apagar tudo', danger: true})) {
-        state=freshState(); save().then(renderAll);
+        state=freshState(); renderAll(); persist();
       }
     },
     btnExportCert_click: async function() {

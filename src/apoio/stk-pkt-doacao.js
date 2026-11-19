@@ -173,7 +173,7 @@
     <div class="dz-avg" data-avg><span>carregando média…</span></div>
     <span class="dz-label" style="text-align:center">Sua nota para este app</span>
     <div class="dz-stars" role="radiogroup" aria-label="Nota de 1 a 5">
-      ${[1, 2, 3, 4, 5].map((n) => `<button class="dz-star" role="radio" aria-checked="false" aria-label="${n} de 5" data-n="${n}">★</button>`).join('')}
+      ${[1, 2, 3, 4, 5].map((n) => `<button class="dz-star" role="radio" aria-checked="false" aria-label="${n} de 5" data-n="${n}"><svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></button>`).join('')}
     </div>
     <div class="dz-star-label" data-star-label></div>
     <button class="dz-btn" data-enviar="avaliar" disabled>Enviar avaliação</button>

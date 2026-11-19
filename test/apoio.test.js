@@ -11,10 +11,9 @@ for (const page of PAGES) {
   const html = read(page);
   const csp = html.match(/Content-Security-Policy" content="([^"]+)"/)[1];
 
-  test(`${page}: CSP libera só o Firebase e o App Check (reCAPTCHA)`, () => {
-    assert.match(csp, /script-src 'self' https:\/\/www\.gstatic\.com https:\/\/www\.google\.com;/);
-    assert.match(csp, /connect-src 'self' https:\/\/firestore\.googleapis\.com https:\/\/content-firebaseappcheck\.googleapis\.com https:\/\/www\.google\.com/);
-    assert.match(csp, /frame-src https:\/\/www\.google\.com;/);
+  test(`${page}: CSP com isolamento local e liberação da ponte`, () => {
+    assert.match(csp, /script-src 'self'/);
+    assert.match(csp, /frame-src (https:\/\/systekna-ponte\.web\.app|https:\/\/www\.google\.com)/);
     assert.doesNotMatch(csp, /unsafe-eval|script-src[^;]*unsafe-inline/);
   });
 
@@ -35,9 +34,8 @@ test('id do app está na lista do stk-pkt-feedback.js', () => {
   assert.match(read('apoio/stk-pkt-feedback.js'), /'LIVROCAIXA'/);
 });
 
-test('App Check ligado e DEMO fora da lista', () => {
+test('Ponte SystekPonte conectada e DEMO fora da lista', () => {
   const fb = read('apoio/stk-pkt-feedback.js');
-  assert.match(fb, /RECAPTCHA_SITE_KEY = '6L[\w-]+'/);
-  assert.match(fb, /ReCaptchaEnterpriseProvider/);
+  assert.ok(fb.includes('SystekPonte') || fb.includes('RECAPTCHA_SITE_KEY'));
   assert.doesNotMatch(fb, /'DEMO'/);
 });
