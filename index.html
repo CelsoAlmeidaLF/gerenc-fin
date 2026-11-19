@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="pt-BR" class="vault-locked" data-vault-version="1.17.5" data-vault-app="gerenc-fin" data-vault-name="Livro-Caixa">
+<html lang="pt-BR" class="vault-locked" data-vault-version="1.18.0" data-vault-app="gerenc-fin" data-vault-name="Livro-Caixa">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://www.gstatic.com https://www.google.com; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self' https://firestore.googleapis.com https://content-firebaseappcheck.googleapis.com https://www.google.com; img-src 'self' data:; frame-src https://www.google.com; object-src 'none'; base-uri 'self'; form-action 'self'; worker-src 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; img-src 'self' data:; frame-src https://systekna-ponte.web.app; object-src 'none'; base-uri 'self'; form-action 'self'; worker-src 'self'">
 <meta name="referrer" content="no-referrer">
 <title>Livro-Caixa</title>
 <link rel="manifest" href="manifest.json">
@@ -109,7 +109,7 @@
 
     <div class="card-limit-bar" id="limiteBar">
       <div class="top-line"><span>usado <b class="num" id="cartaoUsadoLabel">R$ 0,00</b></span><span>limite <b class="num" id="cartaoLimiteLabel">R$ 0,00</b></span></div>
-      <div class="track"><div class="fill" id="cartaoFill" style="width:0%"></div></div>
+      <div class="track"><div class="fill" id="cartaoFill"></div></div>
       <div class="config-row" id="cartaoConfigInfo"></div>
     </div>
 
@@ -176,7 +176,7 @@
   <footer class="util">
     <div class="status" id="saveStatus">dados protegidos por criptografia</div>
     <!-- Backup, certificado e bloqueio ficam em Configurações (menu ⋮), que aciona estes botões ocultos. -->
-    <div class="buttons" style="display:none">
+    <div class="buttons is-hidden">
       <button id="btnExport"><i data-icon="download" data-size="14"></i> Exportar JSON</button>
       <button id="btnImport"><i data-icon="upload" data-size="14"></i> Importar JSON</button>
       <button id="btnReset"><i data-icon="trash" data-size="14"></i> Limpar tudo</button>
@@ -185,8 +185,8 @@
       <button id="btnBiometric"><i data-icon="settings" data-size="14"></i> Configurações</button>
       <button id="btnRecover"><i data-icon="lock" data-size="14"></i> Bloquear / recuperar PIN</button>
     </div>
-    <input type="file" id="importFile" accept="application/json">
-    <input type="file" id="importCertFile" accept="application/json" style="display:none">
+    <input type="file" id="importFile" accept=".json,.txt,application/json,text/plain">
+    <input type="file" id="importCertFile" accept="application/json" class="is-hidden">
   </footer>
 
 </div>
@@ -197,7 +197,8 @@
 <script src="stk-pkt-secure-vault.js"></script>
 <script src="stk-pkt-secure-ui.js"></script>
 <script src="ledger-engine.js"></script>
-<script src="app.js"></script>
+<script src="program.js"></script>
+<script src="apoio/stk-pkt-ponte.js"></script>
 <script src="apoio/stk-pkt-feedback.js"></script>
 <script src="apoio/stk-pkt-doacao.js" data-app="LIVROCAIXA" data-flutuante="false"></script>
 

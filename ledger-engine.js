@@ -589,7 +589,29 @@
   // ==========================================
   const consts = new LedgerConstants();
 
+  /** Mensagem exibida quando a gravação falha. */
+  const MSG_FALHA_SALVAR = 'Não foi possível salvar. A última alteração não foi gravada.';
+
+  /**
+   * Filtro de mensagens técnicas: erros do app começam com maiúscula e são em português; as de bibliotecas
+   * (ex.: "backup não criptografado", "quota exceeded") começam com minúscula e não vão ao usuário.
+   */
+  function mensagemAoUsuario(err, fallback) {
+    return err && err.message && !/^[a-z]/.test(err.message) ? err.message : fallback;
+  }
+
+  /**
+   * Grava o estado e diz se deu certo, sem lançar. Em falha devolve o último JSON bom (para reverter a tela)
+   * e nunca o estado novo: quem chama não pode mostrar como salvo o que não foi persistido.
+   * `gravar(json)` é a porta de saída (async); `ultimoGravado` é o JSON da última gravação bem-sucedida.
+   */
+  async function gravarComReversao(json, gravar, ultimoGravado) {
+    try { await gravar(json); return { ok: true, gravado: json }; }
+    catch (_) { return { ok: false, gravado: ultimoGravado }; }
+  }
+
   return {
+    MSG_FALHA_SALVAR, mensagemAoUsuario, gravarComReversao,
     localISO: DateHelper.localISO.bind(DateHelper),
     hojeISO: DateHelper.hojeISO.bind(DateHelper),
     parseISO: DateHelper.parseISO.bind(DateHelper),

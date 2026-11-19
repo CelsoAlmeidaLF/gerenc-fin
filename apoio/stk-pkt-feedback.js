@@ -1,6 +1,6 @@
 /*!
  * stk-pkt-feedback.js — adaptador de avaliações e sugestões
- * Backend atual: Firebase Firestore.
+ * Backend atual: Firebase Firestore, pela ponte (stk-pkt-ponte.js, iframe em systekna-ponte.web.app).
  * Para migrar (self-hosted), reescreva só as 3 funções de BACKEND mantendo a mesma interface:
  *   Feedback.avaliar(app, nota)            → Promise<void>
  *   Feedback.sugerir(app, {tipo, texto, email}) → Promise<void>
@@ -10,70 +10,24 @@
 (function () {
   'use strict';
 
-  // ───────────── CONFIGURAÇÃO ─────────────
-  // Copie do console do Firebase: Configurações do projeto → Seus apps → SDK (config)
-  const FIREBASE_CONFIG = {
-    apiKey: 'AIzaSyCQx8kJyXEReASiQMI4a5bT5NNWgtBmJpM',
-    authDomain: 'systekna-feedback.firebaseapp.com',
-    projectId: 'systekna-feedback',
-    appId: '1:870927975015:web:0576bd5e3cdd8d067d8ac2',
-  };
-  // App Check com reCAPTCHA Enterprise (bloqueia robôs). Chave de site do projeto; deixe '' para desativar.
-  // Domínios da chave: celsoalmeidalf.github.io, financ-apps.github.io, localhost.
-  const RECAPTCHA_SITE_KEY = '6LehydgtAAAAAOqkwKOQPzg2m0CZwYTRZSXPeyyx';
-  const SDK = 'https://www.gstatic.com/firebasejs/10.14.1/';
-
+  // ───────────── BACKEND (ponte do Firebase) ─────────────
+  // O SDK do Firebase (App Check + Firestore) roda na ponte, num endereço só dela (stk-pkt-ponte): o app não carrega
+  // código do Google perto do cofre aberto. Requer stk-pkt-ponte.js carregado antes deste arquivo.
   const APPS = ['CRIPTO', 'LIVROCAIXA', 'CAMBIO', 'DESPESAS', 'LAUNCHER', 'TAXOMETRO', 'INVEST'];
   const TIPOS = ['sugestao', 'problema', 'elogio'];
-
-  // ───────────── BACKEND (Firebase) ─────────────
-  let fbPromise = null;
-  function firebase() {
-    if (!fbPromise) {
-      fbPromise = (async () => {
-        const { initializeApp, getApps } = await import(SDK + 'firebase-app.js');
-        const fs = await import(SDK + 'firebase-firestore.js');
-        const app = getApps().find((a) => a.name === 'feedback') || initializeApp(FIREBASE_CONFIG, 'feedback');
-        if (RECAPTCHA_SITE_KEY) {
-          const ac = await import(SDK + 'firebase-app-check.js');
-          ac.initializeAppCheck(app, {
-            provider: new ac.ReCaptchaEnterpriseProvider(RECAPTCHA_SITE_KEY),
-            isTokenAutoRefreshEnabled: true,
-          });
-        }
-        return { fs, db: fs.getFirestore(app) };
-      })().catch((e) => { fbPromise = null; throw e; });
-    }
-    return fbPromise;
-  }
-
-  async function backendAvaliar(app, nota) {
-    const { fs, db } = await firebase();
-    await fs.addDoc(fs.collection(db, 'avaliacoes'), { app, nota, criadoEm: fs.serverTimestamp() });
-  }
-
-  async function backendSugerir(app, dados) {
-    const { fs, db } = await firebase();
-    const doc = { app, tipo: dados.tipo, texto: dados.texto, criadoEm: fs.serverTimestamp() };
-    if (dados.email) doc.email = dados.email;
-    await fs.addDoc(fs.collection(db, 'sugestoes'), doc);
-  }
-
-  async function backendMedia(app) {
-    const { fs, db } = await firebase();
-    const q = fs.query(fs.collection(db, 'avaliacoes'), fs.where('app', '==', app));
-    const snap = await fs.getAggregateFromServer(q, { media: fs.average('nota'), total: fs.count() });
-    const d = snap.data();
-    return { media: d.media || 0, total: d.total || 0 };
-  }
-
-  // Relatório técnico de erro: só os campos limpos; o horário vem do servidor
+  const ponte = () => {
+    if (!window.SystekPonte) throw new Error('Serviço de avaliações indisponível nesta página.');
+    return window.SystekPonte;
+  };
+  const backendAvaliar = (app, nota) => ponte().chamar('avaliar', { app, nota });
+  const backendSugerir = (app, dados) => ponte().chamar('sugerir', { app, tipo: dados.tipo, texto: dados.texto, email: dados.email || '' });
+  const backendMedia = (app) => ponte().chamar('media', { app });
+  // Relatório técnico de erro: só os campos limpos; o horário vem do servidor (na ponte)
   const CAMPOS_ERRO = ['app', 'versao', 'tipo', 'mensagem', 'origem', 'pilha', 'navegador', 'assinatura'];
-  async function backendRelatarErro(reg) {
-    const { fs, db } = await firebase();
-    const doc = { criadoEm: fs.serverTimestamp() };
-    for (const k of CAMPOS_ERRO) doc[k] = String(reg[k] == null ? '' : reg[k]);
-    await fs.addDoc(fs.collection(db, 'erros'), doc);
+  function backendRelatarErro(reg) {
+    const limpo = {};
+    for (const k of CAMPOS_ERRO) limpo[k] = String(reg[k] == null ? '' : reg[k]);
+    return ponte().chamar('erro', { reg: limpo });
   }
 
   // ───────────── VALIDAÇÃO + LIMITES LOCAIS ─────────────

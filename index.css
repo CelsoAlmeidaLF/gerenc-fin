@@ -250,6 +250,7 @@
     height: 100%;
     background: var(--accent);
     border-radius: 999px;
+    width: var(--pct, 0%);
     transition: width .25s ease;
   }
   .card-limit-bar.warn .fill { background: var(--gold); }
@@ -351,3 +352,13 @@
   form.entry[hidden] { display: none; }
   #formConfigCartao { margin-bottom: 14px; }
 
+
+  /* Estados e utilitários (antes eram style="" no HTML e no JS) */
+  .card-limit-bar[data-cat] { margin-bottom: 10px; }
+  .card-limit-bar .actions .del { all: unset; cursor: pointer; color: var(--rust); }
+  .ledger-summary .cell.saldo .value.is-pos { color: var(--green); }
+  .ledger-summary .cell.saldo .value.is-neg { color: var(--rust); }
+  .rec-box .value { font-size: 1.1rem; font-weight: 600; }
+  .rec-box .value.is-pos { color: var(--green); }
+  .rec-box .value.is-neg { color: var(--rust); }
+  .is-hidden { display: none !important; }
