@@ -13,7 +13,7 @@
   // ───────────── BACKEND (ponte do Firebase) ─────────────
   // O SDK do Firebase (App Check + Firestore) roda na ponte, num endereço só dela (stk-pkt-ponte): o app não carrega
   // código do Google perto do cofre aberto. Requer stk-pkt-ponte.js carregado antes deste arquivo.
-  const APPS = ['CRIPTO', 'LIVROCAIXA', 'CAMBIO', 'DESPESAS', 'LAUNCHER', 'TAXOMETRO', 'INVEST'];
+  const APPS = ['CRIPTO', 'LIVROCAIXA', 'CAMBIO', 'DESPESAS', 'LAUNCHER', 'TAXOMETRO', 'INVEST', 'FORCA', 'SMART', 'AGENDA', 'BARGESTAO', 'MULTICM'];
   const TIPOS = ['sugestao', 'problema', 'elogio'];
   const ponte = () => {
     if (!window.SystekPonte) throw new Error('Serviço de avaliações indisponível nesta página.');
