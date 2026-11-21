@@ -7,6 +7,7 @@
   const unb64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
   const random = size => crypto.getRandomValues(new Uint8Array(size));
   const pinOK = pin => typeof pin === 'string' && /^\d{6}$/.test(pin);
+  function zeroize(buffer) { if (buffer && typeof buffer.fill === 'function') buffer.fill(0); }
   async function derive(secret, salt) {
     const material = await crypto.subtle.importKey('raw', enc.encode(secret), 'PBKDF2', false, ['deriveKey']);
     return crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: ITERATIONS, hash: 'SHA-256' }, material,
@@ -858,7 +859,7 @@
       delete: appId => run('readwrite', s => s.delete(appId)),
     };
   }
-  const api = { Vault, Identity, PinGuard, idbStore, OUTSIDE_DATA, BACKUP_DAYS, COPY_FORMAT, ALL_FORMAT, ALL_CONTEXT, protect, protectPassphrase, passphraseOK, PASSPHRASE_MIN, unprotect, pinOK, recoveryCode, webauthn, AUTO_LOCK_MINUTES, certOK, seed };
+  const api = { Vault, Identity, PinGuard, idbStore, OUTSIDE_DATA, BACKUP_DAYS, COPY_FORMAT, ALL_FORMAT, ALL_CONTEXT, protect, protectPassphrase, passphraseOK, PASSPHRASE_MIN, unprotect, pinOK, recoveryCode, webauthn, AUTO_LOCK_MINUTES, certOK, seed, zeroize };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.FinancVault = api;
 })(globalThis);
